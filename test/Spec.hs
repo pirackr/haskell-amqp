@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 import Test.Tasty
 import Test.Tasty.HUnit
 import Data.Binary.Put (runPut)
@@ -58,5 +60,18 @@ tests = testGroup "AMQP Tests"
           runPut (putAMQPValue (AMQPLong (-128))) @?= LBS.pack [0x55, 0x80]
       , testCase "long large value encodes to full (0x81)" $
           runPut (putAMQPValue (AMQPLong 128)) @?= LBS.pack [0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80]
+      -- string: 0xa1 + 1 byte length (str8), 0xb1 + 4 byte length (str32)
+      , testCase "string empty encodes to str8 (0xa1)" $
+          runPut (putAMQPValue (AMQPString "")) @?= LBS.pack [0xa1, 0x00]
+      , testCase "string short encodes to str8 (0xa1)" $
+          runPut (putAMQPValue (AMQPString "hello")) @?= LBS.pack ([0xa1, 0x05] ++ [0x68, 0x65, 0x6c, 0x6c, 0x6f])
+      , testCase "string UTF-8 encodes correctly" $
+          -- Unicode codepoint U+4E2D (Chinese character for "middle") encodes to 3 UTF-8 bytes: E4 B8 AD
+          runPut (putAMQPValue (AMQPString "\x4E2D")) @?= LBS.pack [0xa1, 0x03, 0xe4, 0xb8, 0xad]
+      -- symbol: 0xa3 + 1 byte length (sym8), 0xb3 + 4 byte length (sym32)
+      , testCase "symbol empty encodes to sym8 (0xa3)" $
+          runPut (putAMQPValue (AMQPSymbol "")) @?= LBS.pack [0xa3, 0x00]
+      , testCase "symbol short encodes to sym8 (0xa3)" $
+          runPut (putAMQPValue (AMQPSymbol "amqp")) @?= LBS.pack ([0xa3, 0x04] ++ [0x61, 0x6d, 0x71, 0x70])
       ]
   ]

@@ -8,10 +8,12 @@ module Network.AMQP.Types
   , putAMQPValue
   ) where
 
-import Data.Binary.Put (Put, putWord8, putWord16be, putWord32be, putWord64be, putInt8, putInt16be, putInt32be, putInt64be)
+import Data.Binary.Put (Put, putWord8, putWord16be, putWord32be, putWord64be, putInt8, putInt16be, putInt32be, putInt64be, putByteString)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Text (Text)
+import qualified Data.Text.Encoding as TE
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.UUID (UUID)
 import Data.Word (Word8, Word16, Word32, Word64)
@@ -68,4 +70,18 @@ putAMQPValue (AMQPInt n)
 putAMQPValue (AMQPLong n)
   | n >= -128 && n <= 127 = putWord8 0x55 >> putInt8 (fromIntegral n)  -- smalllong
   | otherwise = putWord8 0x81 >> putInt64be n  -- full long
+-- String (UTF-8)
+putAMQPValue (AMQPString t) =
+  let bs = TE.encodeUtf8 t
+      len = BS.length bs
+  in if len <= 255
+     then putWord8 0xa1 >> putWord8 (fromIntegral len) >> putByteString bs  -- str8
+     else putWord8 0xb1 >> putWord32be (fromIntegral len) >> putByteString bs  -- str32
+-- Symbol (ASCII subset)
+putAMQPValue (AMQPSymbol t) =
+  let bs = TE.encodeUtf8 t
+      len = BS.length bs
+  in if len <= 255
+     then putWord8 0xa3 >> putWord8 (fromIntegral len) >> putByteString bs  -- sym8
+     else putWord8 0xb3 >> putWord32be (fromIntegral len) >> putByteString bs  -- sym32
 putAMQPValue _ = error "putAMQPValue: not yet implemented"
