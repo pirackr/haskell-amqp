@@ -46,4 +46,6 @@ data AMQPValue
 -- | Encode an AMQP value to its binary representation.
 putAMQPValue :: AMQPValue -> Put
 putAMQPValue AMQPNull = putWord8 0x40
+putAMQPValue (AMQPBool True) = putWord8 0x41
+putAMQPValue (AMQPBool False) = putWord8 0x42
 putAMQPValue _ = error "putAMQPValue: not yet implemented"
