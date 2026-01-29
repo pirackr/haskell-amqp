@@ -1,22 +1,123 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.QuickCheck
+import Test.QuickCheck
 import Data.Binary.Get (runGet)
 import Data.Binary.Put (runPut)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString as BS
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.UUID (fromWords)
+import qualified Data.UUID as UUID
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Int (Int8, Int16, Int32, Int64)
+import Data.Word (Word8, Word16, Word32, Word64)
 
 import Network.AMQP.Types
+
+-- | Arbitrary instances for primitive AMQP types
+instance Arbitrary AMQPValue where
+  arbitrary = oneof
+    [ pure AMQPNull
+    , AMQPBool <$> arbitrary
+    , AMQPUByte <$> arbitrary
+    , AMQPUShort <$> arbitrary
+    , AMQPUInt <$> arbitrary
+    , AMQPULong <$> arbitrary
+    , AMQPByte <$> arbitrary
+    , AMQPShort <$> arbitrary
+    , AMQPInt <$> arbitrary
+    , AMQPLong <$> arbitrary
+    , AMQPFloat <$> arbitrary
+    , AMQPDouble <$> arbitrary
+    , AMQPTimestamp <$> arbitraryTimestamp
+    , AMQPUuid <$> arbitraryUUID
+    , AMQPBinary <$> arbitraryByteString
+    , AMQPString <$> arbitraryText
+    , AMQPSymbol <$> arbitraryText
+    ]
+    where
+      -- Generate valid timestamp (positive POSIXTime from Word64)
+      arbitraryTimestamp = do
+        w <- arbitrary :: Gen Word64
+        return $ fromIntegral w / 1000.0  -- Convert to seconds
+      -- Generate random UUID
+      arbitraryUUID = do
+        w1 <- arbitrary
+        w2 <- arbitrary
+        w3 <- arbitrary
+        w4 <- arbitrary
+        return $ fromWords w1 w2 w3 w4
+      -- Generate ByteString
+      arbitraryByteString = BS.pack <$> arbitrary
+      -- Generate Text (ASCII subset for simplicity)
+      arbitraryText = T.pack <$> listOf (elements ['a'..'z'])
 
 main :: IO ()
 main = defaultMain tests
 
+-- | QuickCheck property: roundtrip encoding/decoding
+prop_roundtrip :: AMQPValue -> Property
+prop_roundtrip val = roundtrip val === val
+  where
+    roundtrip v = runGet getAMQPValue (runPut (putAMQPValue v))
+
 tests :: TestTree
 tests = testGroup "AMQP Tests"
-  [ testGroup "Decoding"
+  [ testGroup "QuickCheck Roundtrip Tests"
+      [ testProperty "null roundtrip" $ \() ->
+          prop_roundtrip AMQPNull
+      , testProperty "bool roundtrip" $ \b ->
+          prop_roundtrip (AMQPBool b)
+      , testProperty "ubyte roundtrip" $ \(w :: Word8) ->
+          prop_roundtrip (AMQPUByte w)
+      , testProperty "ushort roundtrip" $ \(w :: Word16) ->
+          prop_roundtrip (AMQPUShort w)
+      , testProperty "uint roundtrip" $ \(w :: Word32) ->
+          prop_roundtrip (AMQPUInt w)
+      , testProperty "ulong roundtrip" $ \(w :: Word64) ->
+          prop_roundtrip (AMQPULong w)
+      , testProperty "byte roundtrip" $ \(i :: Int8) ->
+          prop_roundtrip (AMQPByte i)
+      , testProperty "short roundtrip" $ \(i :: Int16) ->
+          prop_roundtrip (AMQPShort i)
+      , testProperty "int roundtrip" $ \(i :: Int32) ->
+          prop_roundtrip (AMQPInt i)
+      , testProperty "long roundtrip" $ \(i :: Int64) ->
+          prop_roundtrip (AMQPLong i)
+      , testProperty "float roundtrip" $ \f ->
+          -- Skip NaN values as they don't equal themselves
+          not (isNaN f) ==> prop_roundtrip (AMQPFloat f)
+      , testProperty "double roundtrip" $ \d ->
+          -- Skip NaN values as they don't equal themselves
+          not (isNaN d) ==> prop_roundtrip (AMQPDouble d)
+      , testProperty "timestamp roundtrip" $ \(w :: Word64) ->
+          -- Generate timestamp from Word64, but constrain to avoid overflow
+          -- when converting to Int64 milliseconds (max safe value is 2^63 - 1 milliseconds)
+          let maxSafeMillis = 9223372036854775807 :: Word64  -- 2^63 - 1
+              safew = w `mod` maxSafeMillis
+              t = fromIntegral safew / 1000.0 :: POSIXTime
+          in prop_roundtrip (AMQPTimestamp t)
+      , testProperty "uuid roundtrip" $ \w1 w2 w3 w4 ->
+          let uuid = fromWords w1 w2 w3 w4
+          in prop_roundtrip (AMQPUuid uuid)
+      , testProperty "binary roundtrip" $ \bs ->
+          prop_roundtrip (AMQPBinary (BS.pack bs))
+      , testProperty "string roundtrip" $ \s ->
+          -- Use ASCII subset for safety
+          let text = T.pack (filter (\c -> c >= ' ' && c <= '~') s)
+          in prop_roundtrip (AMQPString text)
+      , testProperty "symbol roundtrip" $ \s ->
+          -- Use ASCII subset for safety
+          let text = T.pack (filter (\c -> c >= ' ' && c <= '~') s)
+          in prop_roundtrip (AMQPSymbol text)
+      ]
+  , testGroup "Decoding"
       [ testCase "0x40 decodes to null" $
           runGet getAMQPValue (LBS.pack [0x40]) @?= AMQPNull
       ]

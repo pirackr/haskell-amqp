@@ -4,13 +4,13 @@ pkgs.mkShell {
   buildInputs = with pkgs; [
     # Haskell tooling
     stack
-    ghc
-    haskell-language-server
-    cabal-install
 
     # System dependencies
     zlib
+    zlib.dev
     pkg-config
+    gmp
+    gmp.dev
 
     # For Docker tests
     docker

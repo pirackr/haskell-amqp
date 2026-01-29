@@ -1,10 +1,10 @@
-resolver: lts-22.43
+resolver: lts-23.0
 
 packages:
   - .
 
 nix:
   enable: true
-  packages: [zlib, pkg-config]
+  packages: [zlib, pkg-config, gmp]
 
 extra-deps: []

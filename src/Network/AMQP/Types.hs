@@ -10,7 +10,7 @@ module Network.AMQP.Types
   , getAMQPValue
   ) where
 
-import Data.Binary.Get (Get, getWord8)
+import Data.Binary.Get (Get, getWord8, getWord16be, getWord32be, getWord64be, getInt8, getInt16be, getInt32be, getInt64be, getByteString, getFloatbe, getDoublebe)
 import Data.Binary.Put (Put, putWord8, putWord16be, putWord32be, putWord64be, putInt8, putInt16be, putInt32be, putInt64be, putByteString, putFloatbe, putDoublebe)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS

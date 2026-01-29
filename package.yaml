@@ -36,3 +36,4 @@ tests:
       - binary
       - time
       - uuid
+      - text

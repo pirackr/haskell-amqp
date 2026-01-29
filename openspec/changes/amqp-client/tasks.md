@@ -20,7 +20,7 @@
 - [x] 2.10 Implement Get instance for integer types
 - [x] 2.11 Implement Get instance for string/symbol/binary
 - [x] 2.12 Implement Get instance for uuid, timestamp, float, double
-- [ ] 2.13 Write QuickCheck roundtrip tests for all primitive types
+- [x] 2.13 Write QuickCheck roundtrip tests for all primitive types
 
 ## 3. Types - Composites
 
