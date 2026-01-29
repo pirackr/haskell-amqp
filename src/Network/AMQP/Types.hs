@@ -84,4 +84,10 @@ putAMQPValue (AMQPSymbol t) =
   in if len <= 255
      then putWord8 0xa3 >> putWord8 (fromIntegral len) >> putByteString bs  -- sym8
      else putWord8 0xb3 >> putWord32be (fromIntegral len) >> putByteString bs  -- sym32
+-- Binary
+putAMQPValue (AMQPBinary bs) =
+  let len = BS.length bs
+  in if len <= 255
+     then putWord8 0xa0 >> putWord8 (fromIntegral len) >> putByteString bs  -- vbin8
+     else putWord8 0xb0 >> putWord32be (fromIntegral len) >> putByteString bs  -- vbin32
 putAMQPValue _ = error "putAMQPValue: not yet implemented"

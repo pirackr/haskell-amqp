@@ -73,5 +73,10 @@ tests = testGroup "AMQP Tests"
           runPut (putAMQPValue (AMQPSymbol "")) @?= LBS.pack [0xa3, 0x00]
       , testCase "symbol short encodes to sym8 (0xa3)" $
           runPut (putAMQPValue (AMQPSymbol "amqp")) @?= LBS.pack ([0xa3, 0x04] ++ [0x61, 0x6d, 0x71, 0x70])
+      -- binary: 0xa0 + 1 byte length (vbin8), 0xb0 + 4 byte length (vbin32)
+      , testCase "binary empty encodes to vbin8 (0xa0)" $
+          runPut (putAMQPValue (AMQPBinary "")) @?= LBS.pack [0xa0, 0x00]
+      , testCase "binary short encodes to vbin8 (0xa0)" $
+          runPut (putAMQPValue (AMQPBinary "\x01\x02\x03")) @?= LBS.pack [0xa0, 0x03, 0x01, 0x02, 0x03]
       ]
   ]
