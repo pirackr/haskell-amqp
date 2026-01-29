@@ -150,6 +150,28 @@ tests = testGroup "AMQP Tests"
           forAll (listOf1 arbitraryPrimitive) $ \items ->
             prop_roundtrip (AMQPArray items)
       ]
+  , testGroup "Nested Structures Tests"
+      [ testCase "nested list (list containing list)" $
+          let nested = AMQPList [AMQPNull, AMQPList [AMQPBool True, AMQPBool False], AMQPUInt 42]
+              roundtripped = runGet getAMQPValue (runPut (putAMQPValue nested))
+          in roundtripped @?= nested
+      , testCase "nested map (map with list value)" $
+          let nested = AMQPMap [(AMQPString "key", AMQPList [AMQPInt 1, AMQPInt 2])]
+              roundtripped = runGet getAMQPValue (runPut (putAMQPValue nested))
+          in roundtripped @?= nested
+      , testCase "list containing map" $
+          let nested = AMQPList [AMQPMap [(AMQPString "a", AMQPInt 1)], AMQPNull]
+              roundtripped = runGet getAMQPValue (runPut (putAMQPValue nested))
+          in roundtripped @?= nested
+      , testCase "deeply nested list" $
+          let nested = AMQPList [AMQPList [AMQPList [AMQPNull]]]
+              roundtripped = runGet getAMQPValue (runPut (putAMQPValue nested))
+          in roundtripped @?= nested
+      , testCase "array containing primitives of same type" $
+          let arr = AMQPArray [AMQPInt 1, AMQPInt 2, AMQPInt 3]
+              roundtripped = runGet getAMQPValue (runPut (putAMQPValue arr))
+          in roundtripped @?= arr
+      ]
   , testGroup "Decoding"
       [ testCase "0x40 decodes to null" $
           runGet getAMQPValue (LBS.pack [0x40]) @?= AMQPNull

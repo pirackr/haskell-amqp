@@ -30,8 +30,8 @@
 - [x] 3.4 Implement Get instance for list
 - [x] 3.5 Implement Get instance for map
 - [x] 3.6 Implement Get instance for array
-- [ ] 3.7 Write QuickCheck roundtrip tests for composite types
-- [ ] 3.8 Write tests for nested structures (list containing list)
+- [x] 3.7 Write QuickCheck roundtrip tests for composite types
+- [x] 3.8 Write tests for nested structures (list containing list)
 
 ## 4. Types - Described Types
 
