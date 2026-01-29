@@ -122,6 +122,7 @@ tests = testGroup "AMQP Tests"
   , describedTypeTests
   , encodingFormatTests
   , decodingFormatTests
+  , performativeTests
   ]
 
 -- -----------------------------------------------------------------------------
@@ -451,4 +452,465 @@ compositeEncodingTests = testGroup "Composite Types"
           runPut (putAMQPValue (AMQPArray [AMQPNull, AMQPNull])) @?=
             LBS.pack [0xe0, 0x03, 0x02, 0x40, 0x40]
       ]
+  ]
+
+-- -----------------------------------------------------------------------------
+-- Performative Tests
+-- -----------------------------------------------------------------------------
+
+-- | Test that a performative roundtrips successfully through encoding and decoding
+roundtripPerformative :: Performative -> Performative
+roundtripPerformative p = runGet getPerformative (runPut (putPerformative p))
+
+performativeTests :: TestTree
+performativeTests = testGroup "Performatives"
+  [ openPerformativeTests
+  , beginPerformativeTests
+  , attachPerformativeTests
+  , flowPerformativeTests
+  , transferPerformativeTests
+  , dispositionPerformativeTests
+  , detachPerformativeTests
+  , endPerformativeTests
+  , closePerformativeTests
+  ]
+
+-- OPEN performative tests
+openPerformativeTests :: TestTree
+openPerformativeTests = testGroup "OPEN Performative"
+  [ testCase "minimal OPEN roundtrip" $
+      let open = Open
+            { openContainerId = "test-container"
+            , openHostname = Nothing
+            , openMaxFrameSize = Nothing
+            , openChannelMax = Nothing
+            , openIdleTimeOut = Nothing
+            , openOutgoingLocales = Nothing
+            , openIncomingLocales = Nothing
+            , openOfferedCapabilities = Nothing
+            , openDesiredCapabilities = Nothing
+            , openProperties = Nothing
+            }
+          performative = PerformativeOpen open
+      in roundtripPerformative performative @?= performative
+  , testCase "OPEN with all fields roundtrip" $
+      let open = Open
+            { openContainerId = "test-container"
+            , openHostname = Just "localhost"
+            , openMaxFrameSize = Just 65536
+            , openChannelMax = Just 255
+            , openIdleTimeOut = Just 30000
+            , openOutgoingLocales = Just ["en-US"]
+            , openIncomingLocales = Just ["en-US"]
+            , openOfferedCapabilities = Just ["ANONYMOUS-RELAY"]
+            , openDesiredCapabilities = Just ["DELAYED-DELIVERY"]
+            , openProperties = Just [(AMQPSymbol "product", AMQPString "haskell-amqp")]
+            }
+          performative = PerformativeOpen open
+      in roundtripPerformative performative @?= performative
+  , testCase "OPEN encoding has descriptor 0x10" $
+      let open = Open
+            { openContainerId = "test"
+            , openHostname = Nothing
+            , openMaxFrameSize = Nothing
+            , openChannelMax = Nothing
+            , openIdleTimeOut = Nothing
+            , openOutgoingLocales = Nothing
+            , openIncomingLocales = Nothing
+            , openOfferedCapabilities = Nothing
+            , openDesiredCapabilities = Nothing
+            , openProperties = Nothing
+            }
+          performative = PerformativeOpen open
+          encoded = runPut (putPerformative performative)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000010) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x10"
+  ]
+
+-- BEGIN performative tests
+beginPerformativeTests :: TestTree
+beginPerformativeTests = testGroup "BEGIN Performative"
+  [ testCase "minimal BEGIN roundtrip (initiator)" $
+      let begin = Begin
+            { beginRemoteChannel = Nothing
+            , beginNextOutgoingId = 0
+            , beginIncomingWindow = 2048
+            , beginOutgoingWindow = 2048
+            , beginHandleMax = Nothing
+            , beginOfferedCapabilities = Nothing
+            , beginDesiredCapabilities = Nothing
+            , beginProperties = Nothing
+            }
+          performative = PerformativeBegin begin
+      in roundtripPerformative performative @?= performative
+  , testCase "BEGIN with remote channel roundtrip (responder)" $
+      let begin = Begin
+            { beginRemoteChannel = Just 0
+            , beginNextOutgoingId = 0
+            , beginIncomingWindow = 2048
+            , beginOutgoingWindow = 2048
+            , beginHandleMax = Just 255
+            , beginOfferedCapabilities = Nothing
+            , beginDesiredCapabilities = Nothing
+            , beginProperties = Nothing
+            }
+          performative = PerformativeBegin begin
+      in roundtripPerformative performative @?= performative
+  , testCase "BEGIN encoding has descriptor 0x11" $
+      let begin = Begin
+            { beginRemoteChannel = Nothing
+            , beginNextOutgoingId = 0
+            , beginIncomingWindow = 100
+            , beginOutgoingWindow = 100
+            , beginHandleMax = Nothing
+            , beginOfferedCapabilities = Nothing
+            , beginDesiredCapabilities = Nothing
+            , beginProperties = Nothing
+            }
+          performative = PerformativeBegin begin
+          encoded = runPut (putPerformative performative)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000011) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x11"
+  ]
+
+-- ATTACH performative tests
+attachPerformativeTests :: TestTree
+attachPerformativeTests = testGroup "ATTACH Performative"
+  [ testCase "minimal ATTACH as sender roundtrip" $
+      let attach = Attach
+            { attachName = "sender-link"
+            , attachHandle = 0
+            , attachRole = RoleSender
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Nothing
+            , attachTarget = Nothing
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Nothing
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+          performative = PerformativeAttach attach
+      in roundtripPerformative performative @?= performative
+  , testCase "ATTACH as receiver with source/target roundtrip" $
+      let source = Source $ Terminus
+            { terminusAddress = Just "queue1"
+            , terminusDurable = Just 0
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+          target = Target $ Terminus
+            { terminusAddress = Just "receiver-1"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+          attach = Attach
+            { attachName = "receiver-link"
+            , attachHandle = 1
+            , attachRole = RoleReceiver
+            , attachSndSettleMode = Just Unsettled
+            , attachRcvSettleMode = Just First
+            , attachSource = Just source
+            , attachTarget = Just target
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Just 0
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+          performative = PerformativeAttach attach
+      in roundtripPerformative performative @?= performative
+  , testCase "ATTACH encoding has descriptor 0x12" $
+      let attach = Attach
+            { attachName = "test"
+            , attachHandle = 0
+            , attachRole = RoleSender
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Nothing
+            , attachTarget = Nothing
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Nothing
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+          performative = PerformativeAttach attach
+          encoded = runPut (putPerformative performative)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000012) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x12"
+  ]
+
+-- FLOW performative tests
+flowPerformativeTests :: TestTree
+flowPerformativeTests = testGroup "FLOW Performative"
+  [ testCase "session FLOW roundtrip" $
+      let flow = Flow
+            { flowNextIncomingId = Just 1
+            , flowIncomingWindow = 2048
+            , flowNextOutgoingId = 0
+            , flowOutgoingWindow = 2048
+            , flowHandle = Nothing
+            , flowDeliveryCount = Nothing
+            , flowLinkCredit = Nothing
+            , flowAvailable = Nothing
+            , flowDrain = Nothing
+            , flowEcho = Nothing
+            , flowProperties = Nothing
+            }
+          performative = PerformativeFlow flow
+      in roundtripPerformative performative @?= performative
+  , testCase "link FLOW with credit roundtrip" $
+      let flow = Flow
+            { flowNextIncomingId = Just 1
+            , flowIncomingWindow = 2048
+            , flowNextOutgoingId = 0
+            , flowOutgoingWindow = 2048
+            , flowHandle = Just 0
+            , flowDeliveryCount = Just 0
+            , flowLinkCredit = Just 100
+            , flowAvailable = Just 50
+            , flowDrain = Just False
+            , flowEcho = Nothing
+            , flowProperties = Nothing
+            }
+          performative = PerformativeFlow flow
+      in roundtripPerformative performative @?= performative
+  , testCase "FLOW encoding has descriptor 0x13" $
+      let flow = Flow
+            { flowNextIncomingId = Nothing
+            , flowIncomingWindow = 100
+            , flowNextOutgoingId = 0
+            , flowOutgoingWindow = 100
+            , flowHandle = Nothing
+            , flowDeliveryCount = Nothing
+            , flowLinkCredit = Nothing
+            , flowAvailable = Nothing
+            , flowDrain = Nothing
+            , flowEcho = Nothing
+            , flowProperties = Nothing
+            }
+          performative = PerformativeFlow flow
+          encoded = runPut (putPerformative performative)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000013) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x13"
+  ]
+
+-- TRANSFER performative tests
+transferPerformativeTests :: TestTree
+transferPerformativeTests = testGroup "TRANSFER Performative"
+  [ testCase "minimal TRANSFER roundtrip" $
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Nothing
+            , transferDeliveryTag = Nothing
+            , transferMessageFormat = Nothing
+            , transferSettled = Nothing
+            , transferMore = Nothing
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+          performative = PerformativeTransfer transfer
+      in roundtripPerformative performative @?= performative
+  , testCase "TRANSFER with delivery info roundtrip" $
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Just 1
+            , transferDeliveryTag = Just (BS.pack [0x01, 0x02, 0x03, 0x04])
+            , transferMessageFormat = Just 0
+            , transferSettled = Just False
+            , transferMore = Just False
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+          performative = PerformativeTransfer transfer
+      in roundtripPerformative performative @?= performative
+  , testCase "TRANSFER encoding has descriptor 0x14" $
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Nothing
+            , transferDeliveryTag = Nothing
+            , transferMessageFormat = Nothing
+            , transferSettled = Nothing
+            , transferMore = Nothing
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+          performative = PerformativeTransfer transfer
+          encoded = runPut (putPerformative performative)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000014) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x14"
+  ]
+
+-- DISPOSITION performative tests
+dispositionPerformativeTests :: TestTree
+dispositionPerformativeTests = testGroup "DISPOSITION Performative"
+  [ testCase "single delivery DISPOSITION roundtrip" $
+      let disposition = Disposition
+            { dispositionRole = RoleReceiver
+            , dispositionFirst = 1
+            , dispositionLast = Nothing
+            , dispositionSettled = Just True
+            , dispositionState = Nothing
+            , dispositionBatchable = Nothing
+            }
+          performative = PerformativeDisposition disposition
+      in roundtripPerformative performative @?= performative
+  , testCase "range DISPOSITION roundtrip" $
+      let disposition = Disposition
+            { dispositionRole = RoleSender
+            , dispositionFirst = 10
+            , dispositionLast = Just 15
+            , dispositionSettled = Just True
+            , dispositionState = Nothing
+            , dispositionBatchable = Nothing
+            }
+          performative = PerformativeDisposition disposition
+      in roundtripPerformative performative @?= performative
+  , testCase "DISPOSITION encoding has descriptor 0x15" $
+      let disposition = Disposition
+            { dispositionRole = RoleReceiver
+            , dispositionFirst = 0
+            , dispositionLast = Nothing
+            , dispositionSettled = Nothing
+            , dispositionState = Nothing
+            , dispositionBatchable = Nothing
+            }
+          performative = PerformativeDisposition disposition
+          encoded = runPut (putPerformative performative)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000015) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x15"
+  ]
+
+-- DETACH performative tests
+detachPerformativeTests :: TestTree
+detachPerformativeTests = testGroup "DETACH Performative"
+  [ testCase "minimal DETACH roundtrip" $
+      let detach = Detach
+            { detachHandle = 0
+            , detachClosed = Nothing
+            , detachError = Nothing
+            }
+          performative = PerformativeDetach detach
+      in roundtripPerformative performative @?= performative
+  , testCase "DETACH with closed flag roundtrip" $
+      let detach = Detach
+            { detachHandle = 1
+            , detachClosed = Just True
+            , detachError = Nothing
+            }
+          performative = PerformativeDetach detach
+      in roundtripPerformative performative @?= performative
+  , testCase "DETACH with error roundtrip" $
+      let error = Error
+            { errorCondition = "amqp:internal-error"
+            , errorDescription = Just "Link detached due to internal error"
+            , errorInfo = Nothing
+            }
+          detach = Detach
+            { detachHandle = 0
+            , detachClosed = Just True
+            , detachError = Just error
+            }
+          performative = PerformativeDetach detach
+      in roundtripPerformative performative @?= performative
+  , testCase "DETACH encoding has descriptor 0x16" $
+      let detach = Detach
+            { detachHandle = 0
+            , detachClosed = Nothing
+            , detachError = Nothing
+            }
+          performative = PerformativeDetach detach
+          encoded = runPut (putPerformative performative)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000016) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x16"
+  ]
+
+-- END performative tests
+endPerformativeTests :: TestTree
+endPerformativeTests = testGroup "END Performative"
+  [ testCase "END without error roundtrip" $
+      let end = End { endError = Nothing }
+          performative = PerformativeEnd end
+      in roundtripPerformative performative @?= performative
+  , testCase "END with error roundtrip" $
+      let error = Error
+            { errorCondition = "amqp:session:window-violation"
+            , errorDescription = Just "Session window exceeded"
+            , errorInfo = Nothing
+            }
+          end = End { endError = Just error }
+          performative = PerformativeEnd end
+      in roundtripPerformative performative @?= performative
+  , testCase "END encoding has descriptor 0x17" $
+      let end = End { endError = Nothing }
+          performative = PerformativeEnd end
+          encoded = runPut (putPerformative performative)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000017) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x17"
+  ]
+
+-- CLOSE performative tests
+closePerformativeTests :: TestTree
+closePerformativeTests = testGroup "CLOSE Performative"
+  [ testCase "CLOSE without error roundtrip" $
+      let close = Close { closeError = Nothing }
+          performative = PerformativeClose close
+      in roundtripPerformative performative @?= performative
+  , testCase "CLOSE with error roundtrip" $
+      let error = Error
+            { errorCondition = "amqp:connection:forced"
+            , errorDescription = Just "Connection closed by administrator"
+            , errorInfo = Just [(AMQPSymbol "timestamp", AMQPTimestamp 1000.0)]
+            }
+          close = Close { closeError = Just error }
+          performative = PerformativeClose close
+      in roundtripPerformative performative @?= performative
+  , testCase "CLOSE encoding has descriptor 0x18" $
+      let close = Close { closeError = Nothing }
+          performative = PerformativeClose close
+          encoded = runPut (putPerformative performative)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000018) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x18"
   ]

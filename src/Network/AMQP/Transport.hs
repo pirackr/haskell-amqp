@@ -8,8 +8,14 @@ module Network.AMQP.Transport
   , putFrame
   , getFrame
     -- * Performatives
+  , module Network.AMQP.Performatives
     -- * State Machines
+  , ConnectionState(..)
+  , SessionState(..)
+  , LinkState(..)
   ) where
+
+import Network.AMQP.Performatives
 
 import Data.Binary.Get (Get, getWord8, getWord16be, getWord32be, getByteString)
 import Data.Binary.Put (Put, putWord8, putWord16be, putWord32be, putByteString)
@@ -108,3 +114,43 @@ getFrame = do
   payload <- getByteString payloadSize
 
   return $ Frame ftype channel payload
+
+-- -----------------------------------------------------------------------------
+-- State Machines
+-- -----------------------------------------------------------------------------
+
+-- | Connection state machine (spec section 2.4.1)
+-- Represents the lifecycle of an AMQP connection
+data ConnectionState
+  = ConnStart      -- ^ Initial state before any headers exchanged
+  | ConnHDRSent    -- ^ Protocol header sent, awaiting peer's header
+  | ConnHDRExch    -- ^ Headers exchanged, awaiting OPEN
+  | ConnOpenSent   -- ^ OPEN sent, awaiting peer's OPEN
+  | ConnOpenRecv   -- ^ OPEN received, need to send OPEN
+  | ConnOpened     -- ^ Connection established (both OPENs exchanged)
+  | ConnCloseSent  -- ^ CLOSE sent, awaiting peer's CLOSE
+  | ConnCloseRecv  -- ^ CLOSE received, need to send CLOSE
+  | ConnEnd        -- ^ Connection closed (terminal state)
+  deriving (Eq, Show)
+
+-- | Session state machine (spec section 2.5.1)
+-- Represents the lifecycle of an AMQP session
+data SessionState
+  = SessUnmapped   -- ^ Session not yet attached to a channel
+  | SessBeginSent  -- ^ BEGIN sent, awaiting peer's BEGIN
+  | SessBeginRecv  -- ^ BEGIN received, need to send BEGIN
+  | SessMapped     -- ^ Session established (both BEGINs exchanged)
+  | SessEndSent    -- ^ END sent, awaiting peer's END
+  | SessEndRecv    -- ^ END received, need to send END
+  deriving (Eq, Show)
+
+-- | Link state machine (spec section 2.6.1)
+-- Represents the lifecycle of an AMQP link
+data LinkState
+  = LinkDetached     -- ^ Link not yet attached
+  | LinkAttachSent   -- ^ ATTACH sent, awaiting peer's ATTACH
+  | LinkAttachRecv   -- ^ ATTACH received, need to send ATTACH
+  | LinkAttached     -- ^ Link established (both ATTACHs exchanged)
+  | LinkDetachSent   -- ^ DETACH sent, awaiting peer's DETACH
+  | LinkDetachRecv   -- ^ DETACH received, need to send DETACH
+  deriving (Eq, Show)

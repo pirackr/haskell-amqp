@@ -50,23 +50,23 @@
 
 ## 6. Transport - Performatives
 
-- [ ] 6.1 Define Performative ADT (Open, Begin, Attach, Flow, Transfer, Disposition, Detach, End, Close)
-- [ ] 6.2 Define Open fields (container-id, hostname, max-frame-size, channel-max, idle-time-out)
-- [ ] 6.3 Define Begin fields (remote-channel, next-outgoing-id, incoming-window, outgoing-window)
-- [ ] 6.4 Define Attach fields (name, handle, role, snd-settle-mode, rcv-settle-mode, source, target)
-- [ ] 6.5 Define Flow fields (next-incoming-id, incoming-window, next-outgoing-id, outgoing-window, handle, delivery-count, link-credit, drain)
-- [ ] 6.6 Define Transfer fields (handle, delivery-id, delivery-tag, message-format, settled)
-- [ ] 6.7 Define Disposition fields (role, first, last, settled, state)
-- [ ] 6.8 Define Detach, End, Close fields
-- [ ] 6.9 Implement encoding for all performatives as described lists
-- [ ] 6.10 Implement decoding for all performatives
-- [ ] 6.11 Write roundtrip tests for each performative
+- [x] 6.1 Define Performative ADT (Open, Begin, Attach, Flow, Transfer, Disposition, Detach, End, Close)
+- [x] 6.2 Define Open fields (container-id, hostname, max-frame-size, channel-max, idle-time-out)
+- [x] 6.3 Define Begin fields (remote-channel, next-outgoing-id, incoming-window, outgoing-window)
+- [x] 6.4 Define Attach fields (name, handle, role, snd-settle-mode, rcv-settle-mode, source, target)
+- [x] 6.5 Define Flow fields (next-incoming-id, incoming-window, next-outgoing-id, outgoing-window, handle, delivery-count, link-credit, drain)
+- [x] 6.6 Define Transfer fields (handle, delivery-id, delivery-tag, message-format, settled)
+- [x] 6.7 Define Disposition fields (role, first, last, settled, state)
+- [x] 6.8 Define Detach, End, Close fields
+- [x] 6.9 Implement encoding for all performatives as described lists
+- [x] 6.10 Implement decoding for all performatives
+- [x] 6.11 Write roundtrip tests for each performative
 
 ## 7. Transport - State Machines
 
-- [ ] 7.1 Define ConnectionState ADT (Start, HDRSent, HDRExch, OpenSent, OpenRecv, Opened, CloseSent, CloseRecv, End)
-- [ ] 7.2 Define SessionState ADT (Unmapped, BeginSent, BeginRecv, Mapped, EndSent, EndRecv)
-- [ ] 7.3 Define LinkState ADT (Detached, AttachSent, AttachRecv, Attached, DetachSent, DetachRecv)
+- [x] 7.1 Define ConnectionState ADT (Start, HDRSent, HDRExch, OpenSent, OpenRecv, Opened, CloseSent, CloseRecv, End)
+- [x] 7.2 Define SessionState ADT (Unmapped, BeginSent, BeginRecv, Mapped, EndSent, EndRecv)
+- [x] 7.3 Define LinkState ADT (Detached, AttachSent, AttachRecv, Attached, DetachSent, DetachRecv)
 - [ ] 7.4 Implement connection state transition function
 - [ ] 7.5 Implement session state transition function
 - [ ] 7.6 Implement link state transition function

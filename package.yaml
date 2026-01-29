@@ -21,6 +21,12 @@ library:
     - containers
     - uuid
     - time
+  exposed-modules:
+    - Network.AMQP.Types
+    - Network.AMQP.Transport
+    - Network.AMQP.Performatives
+    - Network.AMQP.Connection
+    - Network.AMQP.Client
 
 tests:
   haskell-amqp-test:
