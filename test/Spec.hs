@@ -137,6 +137,12 @@ tests = testGroup "AMQP Tests"
           -- Use small lists with primitive types only (avoid recursion for now)
           forAll (listOf1 arbitraryPrimitive) $ \items ->
             prop_roundtrip (AMQPList items)
+      , testProperty "empty map roundtrip" $ \() ->
+          prop_roundtrip (AMQPMap [])
+      , testProperty "map with primitives roundtrip" $
+          -- Use small maps with primitive types only
+          forAll (listOf1 ((,) <$> arbitraryPrimitive <*> arbitraryPrimitive)) $ \pairs ->
+            prop_roundtrip (AMQPMap pairs)
       ]
   , testGroup "Decoding"
       [ testCase "0x40 decodes to null" $
@@ -241,5 +247,17 @@ tests = testGroup "AMQP Tests"
           -- size = 1 (count byte) + 3 (items) = 4
           runPut (putAMQPValue (AMQPList [AMQPNull, AMQPBool True, AMQPUInt 0])) @?=
             LBS.pack [0xc0, 0x04, 0x03, 0x40, 0x41, 0x43]
+      -- map: 0xc1 (map8), 0xd1 (map32)
+      , testCase "empty map encodes to map8 (0xc1)" $
+          -- map8: 0xc1 + size(1 byte) + count(1 byte)
+          -- size = 1 (count byte), count = 0
+          runPut (putAMQPValue (AMQPMap [])) @?= LBS.pack [0xc1, 0x01, 0x00]
+      , testCase "map with one pair encodes to map8 (0xc1)" $
+          -- map8: 0xc1 + size + count + pairs
+          -- pairs: [(true, false)] = [0x41, 0x42] = 2 bytes
+          -- count = 2 (number of elements, not pairs)
+          -- size = 1 (count byte) + 2 (pairs) = 3
+          runPut (putAMQPValue (AMQPMap [(AMQPBool True, AMQPBool False)])) @?=
+            LBS.pack [0xc1, 0x03, 0x02, 0x41, 0x42]
       ]
   ]

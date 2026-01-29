@@ -218,4 +218,21 @@ getAMQPValue = do
       count <- fromIntegral <$> getWord32be
       items <- sequence (replicate count getAMQPValue)
       return (AMQPList items)
+    -- Map: 0xc1 (map8), 0xd1 (map32)
+    0xc1 -> do  -- map8
+      size <- fromIntegral <$> getWord8
+      count <- fromIntegral <$> getWord8
+      pairs <- sequence (replicate (count `div` 2) $ do
+        k <- getAMQPValue
+        v <- getAMQPValue
+        return (k, v))
+      return (AMQPMap pairs)
+    0xd1 -> do  -- map32
+      size <- fromIntegral <$> getWord32be
+      count <- fromIntegral <$> getWord32be
+      pairs <- sequence (replicate (count `div` 2) $ do
+        k <- getAMQPValue
+        v <- getAMQPValue
+        return (k, v))
+      return (AMQPMap pairs)
     _    -> fail $ "getAMQPValue: unknown type code " ++ show typeCode
