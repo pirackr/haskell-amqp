@@ -5,11 +5,12 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
 import Test.QuickCheck
-import Data.Binary.Get (runGet)
+import Data.Binary.Get (runGet, runGetOrFail)
 import Data.Binary.Put (runPut)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString as BS
+import Control.Exception (try, evaluate, ErrorCall)
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.UUID (UUID, fromWords)
 import qualified Data.UUID as UUID
@@ -19,6 +20,7 @@ import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Word (Word8, Word16, Word32, Word64)
 
 import Network.AMQP.Types
+import Network.AMQP.Transport
 
 -- | Generate valid timestamp (positive POSIXTime from Word64)
 -- Constrained to avoid overflow when converting to Int64 milliseconds
@@ -82,9 +84,77 @@ prop_roundtrip val = roundtrip val === val
   where
     roundtrip v = runGet getAMQPValue (runPut (putAMQPValue v))
 
+-- | Arbitrary Frame instance for QuickCheck
+instance Arbitrary Frame where
+  arbitrary = do
+    ftype <- elements [AMQPFrameType, SASLFrameType]
+    channel <- arbitrary
+    -- Generate payload of reasonable size (0-1000 bytes)
+    payloadLen <- choose (0, 1000)
+    payload <- BS.pack <$> vectorOf payloadLen arbitrary
+    return $ Frame ftype channel payload
+
+-- | QuickCheck property: roundtrip encoding/decoding for frames
+prop_frameRoundtrip :: Frame -> Property
+prop_frameRoundtrip frame = roundtrip frame === frame
+  where
+    roundtrip f = runGet getFrame (runPut (putFrame f))
+
 tests :: TestTree
 tests = testGroup "AMQP Tests"
-  [ testGroup "QuickCheck Roundtrip Tests"
+  [ testGroup "Frame Tests"
+      [ testProperty "frame roundtrip" prop_frameRoundtrip
+      , testCase "minimal AMQP frame" $
+          let frame = Frame AMQPFrameType 0 BS.empty
+              encoded = runPut (putFrame frame)
+              decoded = runGet getFrame encoded
+          in decoded @?= frame
+      , testCase "SASL frame with payload" $
+          let payload = BS.pack [0x01, 0x02, 0x03]
+              frame = Frame SASLFrameType 42 payload
+              encoded = runPut (putFrame frame)
+              decoded = runGet getFrame encoded
+          in decoded @?= frame
+      , testCase "frame encoding format" $
+          -- Frame: type=AMQP(0x00), channel=1, payload=[0xAA, 0xBB]
+          -- SIZE: 10 bytes (8 header + 2 payload) = 0x0000000A
+          -- DOFF: 2 (8 bytes header)
+          -- TYPE: 0x00 (AMQP)
+          -- CHANNEL: 0x0001
+          -- PAYLOAD: 0xAA, 0xBB
+          let frame = Frame AMQPFrameType 1 (BS.pack [0xAA, 0xBB])
+          in runPut (putFrame frame) @?=
+             LBS.pack [0x00, 0x00, 0x00, 0x0A,  -- SIZE
+                       0x02,                      -- DOFF
+                       0x00,                      -- TYPE
+                       0x00, 0x01,                -- CHANNEL
+                       0xAA, 0xBB]                -- PAYLOAD
+      , testCase "incomplete frame - too small size" $
+          -- Frame claims to be smaller than header size (8 bytes)
+          let malformed = LBS.pack [0x00, 0x00, 0x00, 0x04,  -- SIZE = 4 (invalid)
+                                    0x02, 0x00, 0x00, 0x00]
+          in case runGetOrFail getFrame malformed of
+               Left _ -> return ()  -- Expected to fail
+               Right (_, _, _) -> assertFailure "Should have failed on invalid size"
+      , testCase "incomplete frame - invalid DOFF" $
+          -- DOFF < 2 is invalid
+          let malformed = LBS.pack [0x00, 0x00, 0x00, 0x08,  -- SIZE
+                                    0x01,                      -- DOFF = 1 (invalid)
+                                    0x00, 0x00, 0x00]
+          in case runGetOrFail getFrame malformed of
+               Left _ -> return ()  -- Expected to fail
+               Right (_, _, _) -> assertFailure "Should have failed on invalid DOFF"
+      , testCase "incomplete frame - unknown type" $
+          -- TYPE = 0xFF is not defined
+          let malformed = LBS.pack [0x00, 0x00, 0x00, 0x08,  -- SIZE
+                                    0x02,                      -- DOFF
+                                    0xFF,                      -- TYPE = 0xFF (invalid)
+                                    0x00, 0x00]
+          in case runGetOrFail getFrame malformed of
+               Left _ -> return ()  -- Expected to fail
+               Right (_, _, _) -> assertFailure "Should have failed on unknown frame type"
+      ]
+  , testGroup "QuickCheck Roundtrip Tests"
       [ testProperty "null roundtrip" $ \() ->
           prop_roundtrip AMQPNull
       , testProperty "bool roundtrip" $ \b ->

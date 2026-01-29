@@ -42,11 +42,11 @@
 
 ## 5. Transport - Frames
 
-- [ ] 5.1 Define Frame data type (size, doff, type, channel, payload)
-- [ ] 5.2 Implement frame parser (Get monad)
-- [ ] 5.3 Implement frame builder (Put monad)
-- [ ] 5.4 Write tests for frame parsing/building roundtrip
-- [ ] 5.5 Write tests for incomplete frame handling
+- [x] 5.1 Define Frame data type (size, doff, type, channel, payload)
+- [x] 5.2 Implement frame parser (Get monad)
+- [x] 5.3 Implement frame builder (Put monad)
+- [x] 5.4 Write tests for frame parsing/building roundtrip
+- [x] 5.5 Write tests for incomplete frame handling
 
 ## 6. Transport - Performatives
 

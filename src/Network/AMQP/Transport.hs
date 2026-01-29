@@ -3,6 +3,108 @@
 -- | AMQP 1.0 transport layer: frames, performatives, state machines.
 module Network.AMQP.Transport
   ( -- * Frames
+    Frame(..)
+  , FrameType(..)
+  , putFrame
+  , getFrame
     -- * Performatives
     -- * State Machines
   ) where
+
+import Data.Binary.Get (Get, getWord8, getWord16be, getWord32be, getByteString)
+import Data.Binary.Put (Put, putWord8, putWord16be, putWord32be, putByteString)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import Data.Word (Word8, Word16, Word32)
+
+-- | AMQP 1.0 frame types as defined in spec section 2.3
+data FrameType
+  = AMQPFrameType    -- ^ 0x00 - AMQP frame
+  | SASLFrameType    -- ^ 0x01 - SASL frame
+  deriving (Eq, Show)
+
+-- | Convert FrameType to byte
+frameTypeToByte :: FrameType -> Word8
+frameTypeToByte AMQPFrameType = 0x00
+frameTypeToByte SASLFrameType = 0x01
+
+-- | Convert byte to FrameType
+byteToFrameType :: Word8 -> Maybe FrameType
+byteToFrameType 0x00 = Just AMQPFrameType
+byteToFrameType 0x01 = Just SASLFrameType
+byteToFrameType _    = Nothing
+
+-- | AMQP 1.0 frame structure
+-- Frame header is 8 bytes:
+--   SIZE (4 bytes) - includes header size
+--   DOFF (1 byte) - data offset in 4-byte units, minimum is 2 (8 bytes)
+--   TYPE (1 byte) - frame type
+--   CHANNEL (2 bytes) - channel number
+--   Extended header (optional, not yet implemented)
+--   Payload (variable)
+data Frame = Frame
+  { frameType    :: !FrameType
+  , frameChannel :: !Word16
+  , framePayload :: !ByteString
+  } deriving (Eq, Show)
+
+-- | Encode a frame to binary format
+-- Frame format:
+--   SIZE (4 bytes, big-endian) - total frame size including header
+--   DOFF (1 byte) - data offset in 4-byte units (minimum 2 = 8 bytes header)
+--   TYPE (1 byte) - frame type
+--   CHANNEL (2 bytes, big-endian) - channel number
+--   PAYLOAD (variable)
+putFrame :: Frame -> Put
+putFrame (Frame ftype channel payload) = do
+  let doff = 2  -- 2 * 4 = 8 bytes header (no extended header)
+      payloadSize = BS.length payload
+      totalSize = 8 + payloadSize  -- header (8 bytes) + payload
+  putWord32be (fromIntegral totalSize)
+  putWord8 doff
+  putWord8 (frameTypeToByte ftype)
+  putWord16be channel
+  putByteString payload
+
+-- | Decode a frame from binary format
+-- Returns Nothing if the frame is incomplete or malformed
+getFrame :: Get Frame
+getFrame = do
+  size <- getWord32be
+  doff <- getWord8
+
+  -- Validate DOFF (minimum is 2, which gives 8-byte header)
+  if doff < 2
+    then fail "getFrame: invalid DOFF (must be >= 2)"
+    else return ()
+
+  -- Read frame type
+  typeCode <- getWord8
+  ftype <- case byteToFrameType typeCode of
+    Just t  -> return t
+    Nothing -> fail $ "getFrame: unknown frame type " ++ show typeCode
+
+  -- Read channel
+  channel <- getWord16be
+
+  -- Calculate payload size
+  let headerSize = fromIntegral doff * 4  -- DOFF is in 4-byte units
+      payloadSize = fromIntegral size - headerSize
+
+  -- Validate size
+  if payloadSize < 0
+    then fail "getFrame: invalid frame size"
+    else return ()
+
+  -- Skip extended header if present (DOFF > 2)
+  if doff > 2
+    then do
+      let extendedHeaderSize = headerSize - 8
+      _ <- getByteString extendedHeaderSize
+      return ()
+    else return ()
+
+  -- Read payload
+  payload <- getByteString payloadSize
+
+  return $ Frame ftype channel payload
