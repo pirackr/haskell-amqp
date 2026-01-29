@@ -26,10 +26,10 @@
 
 - [x] 3.1 Implement Put instance for list (list0, list8, list32)
 - [x] 3.2 Implement Put instance for map (map8, map32)
-- [ ] 3.3 Implement Put instance for array (array8, array32)
+- [x] 3.3 Implement Put instance for array (array8, array32)
 - [x] 3.4 Implement Get instance for list
 - [x] 3.5 Implement Get instance for map
-- [ ] 3.6 Implement Get instance for array
+- [x] 3.6 Implement Get instance for array
 - [ ] 3.7 Write QuickCheck roundtrip tests for composite types
 - [ ] 3.8 Write tests for nested structures (list containing list)
 

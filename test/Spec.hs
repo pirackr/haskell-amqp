@@ -143,6 +143,12 @@ tests = testGroup "AMQP Tests"
           -- Use small maps with primitive types only
           forAll (listOf1 ((,) <$> arbitraryPrimitive <*> arbitraryPrimitive)) $ \pairs ->
             prop_roundtrip (AMQPMap pairs)
+      , testProperty "empty array roundtrip" $ \() ->
+          prop_roundtrip (AMQPArray [])
+      , testProperty "array with primitives roundtrip" $
+          -- Use small arrays with primitive types only
+          forAll (listOf1 arbitraryPrimitive) $ \items ->
+            prop_roundtrip (AMQPArray items)
       ]
   , testGroup "Decoding"
       [ testCase "0x40 decodes to null" $
@@ -259,5 +265,16 @@ tests = testGroup "AMQP Tests"
           -- size = 1 (count byte) + 2 (pairs) = 3
           runPut (putAMQPValue (AMQPMap [(AMQPBool True, AMQPBool False)])) @?=
             LBS.pack [0xc1, 0x03, 0x02, 0x41, 0x42]
+      -- array: 0xe0 (array8), 0xf0 (array32)
+      , testCase "empty array encodes to array8 (0xe0)" $
+          -- array8: 0xe0 + size(1 byte) + count(1 byte)
+          -- size = 1 (count byte), count = 0
+          runPut (putAMQPValue (AMQPArray [])) @?= LBS.pack [0xe0, 0x01, 0x00]
+      , testCase "array with nulls encodes to array8 (0xe0)" $
+          -- array8: 0xe0 + size + count + items
+          -- items: [null, null] = [0x40, 0x40] = 2 bytes
+          -- size = 1 (count byte) + 2 (items) = 3
+          runPut (putAMQPValue (AMQPArray [AMQPNull, AMQPNull])) @?=
+            LBS.pack [0xe0, 0x03, 0x02, 0x40, 0x40]
       ]
   ]

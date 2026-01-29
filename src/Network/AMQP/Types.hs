@@ -140,6 +140,24 @@ putAMQPValue (AMQPMap pairs) =
        putWord32be (fromIntegral $ size + 4)  -- size includes count bytes
        putWord32be (fromIntegral count)
        putByteString pairsBytes
+-- Array: 0xe0 (array8), 0xf0 (array32)
+-- Note: This is a simplified implementation that encodes each element with its type constructor
+-- A full implementation should optimize by encoding the type constructor once
+putAMQPValue (AMQPArray items) =
+  let itemsBytes = LBS.toStrict $ runPut $ mapM_ putAMQPValue items
+      count = length items
+      size = BS.length itemsBytes
+  in if size <= 255 && count <= 255
+     then do
+       putWord8 0xe0  -- array8
+       putWord8 (fromIntegral $ size + 1)  -- size includes count byte
+       putWord8 (fromIntegral count)
+       putByteString itemsBytes
+     else do
+       putWord8 0xf0  -- array32
+       putWord32be (fromIntegral $ size + 4)  -- size includes count bytes
+       putWord32be (fromIntegral count)
+       putByteString itemsBytes
 putAMQPValue _ = error "putAMQPValue: not yet implemented"
 
 -- | Decode an AMQP value from its binary representation.
@@ -235,4 +253,15 @@ getAMQPValue = do
         v <- getAMQPValue
         return (k, v))
       return (AMQPMap pairs)
+    -- Array: 0xe0 (array8), 0xf0 (array32)
+    0xe0 -> do  -- array8
+      size <- fromIntegral <$> getWord8
+      count <- fromIntegral <$> getWord8
+      items <- sequence (replicate count getAMQPValue)
+      return (AMQPArray items)
+    0xf0 -> do  -- array32
+      size <- fromIntegral <$> getWord32be
+      count <- fromIntegral <$> getWord32be
+      items <- sequence (replicate count getAMQPValue)
+      return (AMQPArray items)
     _    -> fail $ "getAMQPValue: unknown type code " ++ show typeCode
