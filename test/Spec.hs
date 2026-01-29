@@ -172,6 +172,25 @@ tests = testGroup "AMQP Tests"
               roundtripped = runGet getAMQPValue (runPut (putAMQPValue arr))
           in roundtripped @?= arr
       ]
+  , testGroup "Described Types Tests"
+      [ testCase "described type with ulong descriptor" $
+          let described = AMQPDescribed (AMQPULong 0x00) (AMQPString "test")
+              roundtripped = runGet getAMQPValue (runPut (putAMQPValue described))
+          in roundtripped @?= described
+      , testCase "described type with symbol descriptor" $
+          let described = AMQPDescribed (AMQPSymbol "amqp:message") (AMQPList [AMQPNull])
+              roundtripped = runGet getAMQPValue (runPut (putAMQPValue described))
+          in roundtripped @?= described
+      , testCase "described type encoding format" $
+          -- descriptor: ulong 0 (0x44), value: null (0x40)
+          let described = AMQPDescribed (AMQPULong 0) AMQPNull
+          in runPut (putAMQPValue described) @?= LBS.pack [0x00, 0x44, 0x40]
+      , testProperty "described type roundtrip" $
+          forAll arbitraryPrimitive $ \desc ->
+          forAll arbitraryPrimitive $ \val ->
+            let described = AMQPDescribed desc val
+            in prop_roundtrip described
+      ]
   , testGroup "Decoding"
       [ testCase "0x40 decodes to null" $
           runGet getAMQPValue (LBS.pack [0x40]) @?= AMQPNull

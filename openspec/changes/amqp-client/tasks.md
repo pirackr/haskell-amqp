@@ -35,10 +35,10 @@
 
 ## 4. Types - Described Types
 
-- [ ] 4.1 Define DescribedType wrapper (descriptor + value)
-- [ ] 4.2 Implement Put instance for described types (0x00 prefix)
-- [ ] 4.3 Implement Get instance for described types
-- [ ] 4.4 Write roundtrip tests for described types
+- [x] 4.1 Define DescribedType wrapper (descriptor + value)
+- [x] 4.2 Implement Put instance for described types (0x00 prefix)
+- [x] 4.3 Implement Get instance for described types
+- [x] 4.4 Write roundtrip tests for described types
 
 ## 5. Transport - Frames
 

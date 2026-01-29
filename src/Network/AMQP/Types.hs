@@ -48,6 +48,8 @@ data AMQPValue
   | AMQPList ![AMQPValue]
   | AMQPMap ![(AMQPValue, AMQPValue)]
   | AMQPArray ![AMQPValue]
+  -- Described types
+  | AMQPDescribed !AMQPValue !AMQPValue  -- descriptor, value
   deriving (Eq, Show)
 
 -- | Encode an AMQP value to its binary representation.
@@ -158,6 +160,11 @@ putAMQPValue (AMQPArray items) =
        putWord32be (fromIntegral $ size + 4)  -- size includes count bytes
        putWord32be (fromIntegral count)
        putByteString itemsBytes
+-- Described type: 0x00 + descriptor + value
+putAMQPValue (AMQPDescribed descriptor value) = do
+  putWord8 0x00  -- described type indicator
+  putAMQPValue descriptor
+  putAMQPValue value
 putAMQPValue _ = error "putAMQPValue: not yet implemented"
 
 -- | Decode an AMQP value from its binary representation.
@@ -264,4 +271,9 @@ getAMQPValue = do
       count <- fromIntegral <$> getWord32be
       items <- sequence (replicate count getAMQPValue)
       return (AMQPArray items)
+    -- Described type: 0x00 + descriptor + value
+    0x00 -> do
+      descriptor <- getAMQPValue
+      value <- getAMQPValue
+      return (AMQPDescribed descriptor value)
     _    -> fail $ "getAMQPValue: unknown type code " ++ show typeCode
