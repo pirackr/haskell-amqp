@@ -10,16 +10,16 @@
 
 - [x] 2.1 Define AMQPValue ADT for all primitive types (null, bool, integers, floats, string, symbol, binary, uuid, timestamp)
 - [x] 2.2 Implement Put instance for null encoding (0x40)
-- [ ] 2.3 Implement Put instance for boolean encoding (0x41, 0x42)
-- [ ] 2.4 Implement Put instance for integer types with compact encodings (uint0, smalluint, uint, etc.)
-- [ ] 2.5 Implement Put instance for string/symbol with str8/str32 encodings
-- [ ] 2.6 Implement Put instance for binary with vbin8/vbin32 encodings
-- [ ] 2.7 Implement Put instance for uuid, timestamp, float, double
-- [ ] 2.8 Implement Get instance for null decoding
-- [ ] 2.9 Implement Get instance for boolean decoding
-- [ ] 2.10 Implement Get instance for integer types
-- [ ] 2.11 Implement Get instance for string/symbol/binary
-- [ ] 2.12 Implement Get instance for uuid, timestamp, float, double
+- [x] 2.3 Implement Put instance for boolean encoding (0x41, 0x42)
+- [x] 2.4 Implement Put instance for integer types with compact encodings (uint0, smalluint, uint, etc.)
+- [x] 2.5 Implement Put instance for string/symbol with str8/str32 encodings
+- [x] 2.6 Implement Put instance for binary with vbin8/vbin32 encodings
+- [x] 2.7 Implement Put instance for uuid, timestamp, float, double
+- [x] 2.8 Implement Get instance for null decoding
+- [x] 2.9 Implement Get instance for boolean decoding
+- [x] 2.10 Implement Get instance for integer types
+- [x] 2.11 Implement Get instance for string/symbol/binary
+- [x] 2.12 Implement Get instance for uuid, timestamp, float, double
 - [ ] 2.13 Write QuickCheck roundtrip tests for all primitive types
 
 ## 3. Types - Composites

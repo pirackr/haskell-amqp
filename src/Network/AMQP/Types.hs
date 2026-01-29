@@ -114,4 +114,62 @@ getAMQPValue = do
   typeCode <- getWord8
   case typeCode of
     0x40 -> return AMQPNull
+    0x41 -> return (AMQPBool True)
+    0x42 -> return (AMQPBool False)
+    -- Unsigned integers
+    0x50 -> AMQPUByte <$> getWord8
+    0x60 -> AMQPUShort <$> getWord16be
+    0x43 -> return (AMQPUInt 0)  -- uint0
+    0x52 -> AMQPUInt . fromIntegral <$> getWord8  -- smalluint
+    0x70 -> AMQPUInt <$> getWord32be
+    0x44 -> return (AMQPULong 0)  -- ulong0
+    0x53 -> AMQPULong . fromIntegral <$> getWord8  -- smallulong
+    0x80 -> AMQPULong <$> getWord64be
+    -- Signed integers
+    0x51 -> AMQPByte <$> getInt8
+    0x61 -> AMQPShort <$> getInt16be
+    0x54 -> AMQPInt . fromIntegral <$> getInt8  -- smallint
+    0x71 -> AMQPInt <$> getInt32be
+    0x55 -> AMQPLong . fromIntegral <$> getInt8  -- smalllong
+    0x81 -> AMQPLong <$> getInt64be
+    -- Binary
+    0xa0 -> do  -- vbin8
+      len <- fromIntegral <$> getWord8
+      AMQPBinary <$> getByteString len
+    0xb0 -> do  -- vbin32
+      len <- fromIntegral <$> getWord32be
+      AMQPBinary <$> getByteString len
+    -- String (UTF-8)
+    0xa1 -> do  -- str8
+      len <- fromIntegral <$> getWord8
+      bs <- getByteString len
+      return $ AMQPString (TE.decodeUtf8 bs)
+    0xb1 -> do  -- str32
+      len <- fromIntegral <$> getWord32be
+      bs <- getByteString len
+      return $ AMQPString (TE.decodeUtf8 bs)
+    -- Symbol (ASCII)
+    0xa3 -> do  -- sym8
+      len <- fromIntegral <$> getWord8
+      bs <- getByteString len
+      return $ AMQPSymbol (TE.decodeUtf8 bs)
+    0xb3 -> do  -- sym32
+      len <- fromIntegral <$> getWord32be
+      bs <- getByteString len
+      return $ AMQPSymbol (TE.decodeUtf8 bs)
+    -- UUID: 16 bytes
+    0x98 -> do
+      bs <- getByteString 16
+      case UUID.fromByteString (LBS.fromStrict bs) of
+        Just uuid -> return (AMQPUuid uuid)
+        Nothing   -> fail "getAMQPValue: invalid UUID bytes"
+    -- Float: IEEE 754 4 bytes
+    0x72 -> AMQPFloat <$> getFloatbe
+    -- Double: IEEE 754 8 bytes
+    0x82 -> AMQPDouble <$> getDoublebe
+    -- Timestamp: 8 bytes (milliseconds since Unix epoch)
+    0x83 -> do
+      millis <- getInt64be
+      let posixTime = fromIntegral millis / 1000 :: POSIXTime
+      return (AMQPTimestamp posixTime)
     _    -> fail $ "getAMQPValue: unknown type code " ++ show typeCode
