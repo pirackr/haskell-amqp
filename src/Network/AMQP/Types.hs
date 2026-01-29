@@ -11,7 +11,7 @@ module Network.AMQP.Types
   ) where
 
 import Data.Binary.Get (Get, getWord8, getWord16be, getWord32be, getWord64be, getInt8, getInt16be, getInt32be, getInt64be, getByteString, getFloatbe, getDoublebe)
-import Data.Binary.Put (Put, putWord8, putWord16be, putWord32be, putWord64be, putInt8, putInt16be, putInt32be, putInt64be, putByteString, putFloatbe, putDoublebe)
+import Data.Binary.Put (Put, runPut, putWord8, putWord16be, putWord32be, putWord64be, putInt8, putInt16be, putInt32be, putInt64be, putByteString, putFloatbe, putDoublebe)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -106,6 +106,40 @@ putAMQPValue (AMQPTimestamp t) =
 putAMQPValue (AMQPFloat f) = putWord8 0x72 >> putFloatbe f
 -- Double: 0x82 + 8 bytes IEEE 754
 putAMQPValue (AMQPDouble d) = putWord8 0x82 >> putDoublebe d
+-- List: 0x45 (empty), 0xc0 (list8), 0xd0 (list32)
+putAMQPValue (AMQPList []) = putWord8 0x45  -- list0
+putAMQPValue (AMQPList items) =
+  let itemsBytes = LBS.toStrict $ runPut $ mapM_ putAMQPValue items
+      count = length items
+      size = BS.length itemsBytes
+  in if size <= 255 && count <= 255
+     then do
+       putWord8 0xc0  -- list8
+       putWord8 (fromIntegral $ size + 1)  -- size includes count byte
+       putWord8 (fromIntegral count)
+       putByteString itemsBytes
+     else do
+       putWord8 0xd0  -- list32
+       putWord32be (fromIntegral $ size + 4)  -- size includes count bytes
+       putWord32be (fromIntegral count)
+       putByteString itemsBytes
+-- Map: 0xc1 (map8), 0xd1 (map32)
+putAMQPValue (AMQPMap []) = putWord8 0xc1 >> putWord8 1 >> putWord8 0  -- empty map8
+putAMQPValue (AMQPMap pairs) =
+  let pairsBytes = LBS.toStrict $ runPut $ mapM_ (\(k, v) -> putAMQPValue k >> putAMQPValue v) pairs
+      count = length pairs * 2  -- key-value pairs, count is number of elements
+      size = BS.length pairsBytes
+  in if size <= 255 && count <= 255
+     then do
+       putWord8 0xc1  -- map8
+       putWord8 (fromIntegral $ size + 1)  -- size includes count byte
+       putWord8 (fromIntegral count)
+       putByteString pairsBytes
+     else do
+       putWord8 0xd1  -- map32
+       putWord32be (fromIntegral $ size + 4)  -- size includes count bytes
+       putWord32be (fromIntegral count)
+       putByteString pairsBytes
 putAMQPValue _ = error "putAMQPValue: not yet implemented"
 
 -- | Decode an AMQP value from its binary representation.
@@ -172,4 +206,16 @@ getAMQPValue = do
       millis <- getInt64be
       let posixTime = fromIntegral millis / 1000 :: POSIXTime
       return (AMQPTimestamp posixTime)
+    -- List: 0x45 (empty), 0xc0 (list8), 0xd0 (list32)
+    0x45 -> return (AMQPList [])  -- list0
+    0xc0 -> do  -- list8
+      size <- fromIntegral <$> getWord8
+      count <- fromIntegral <$> getWord8
+      items <- sequence (replicate count getAMQPValue)
+      return (AMQPList items)
+    0xd0 -> do  -- list32
+      size <- fromIntegral <$> getWord32be
+      count <- fromIntegral <$> getWord32be
+      items <- sequence (replicate count getAMQPValue)
+      return (AMQPList items)
     _    -> fail $ "getAMQPValue: unknown type code " ++ show typeCode

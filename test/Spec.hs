@@ -11,7 +11,7 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString as BS
 import Data.Time.Clock.POSIX (POSIXTime)
-import Data.UUID (fromWords)
+import Data.UUID (UUID, fromWords)
 import qualified Data.UUID as UUID
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -20,43 +20,58 @@ import Data.Word (Word8, Word16, Word32, Word64)
 
 import Network.AMQP.Types
 
+-- | Generate valid timestamp (positive POSIXTime from Word64)
+-- Constrained to avoid overflow when converting to Int64 milliseconds
+arbitraryTimestamp :: Gen POSIXTime
+arbitraryTimestamp = do
+  -- Max safe value: (2^63 - 1) milliseconds = 9223372036854775807 milliseconds
+  -- In seconds: 9223372036854775.807 seconds
+  -- To be safe, use a smaller max value to avoid edge cases
+  millis <- choose (0, 9223372036854775 :: Int64)
+  return $ fromIntegral millis / 1000.0  -- Convert to seconds
+
+-- | Generate random UUID
+arbitraryUUID :: Gen UUID
+arbitraryUUID = do
+  w1 <- arbitrary
+  w2 <- arbitrary
+  w3 <- arbitrary
+  w4 <- arbitrary
+  return $ fromWords w1 w2 w3 w4
+
+-- | Generate ByteString
+arbitraryByteString :: Gen BS.ByteString
+arbitraryByteString = BS.pack <$> arbitrary
+
+-- | Generate Text (ASCII subset for simplicity)
+arbitraryText :: Gen Text
+arbitraryText = T.pack <$> listOf (elements ['a'..'z'])
+
+-- | Generate primitive AMQP values (no composites)
+arbitraryPrimitive :: Gen AMQPValue
+arbitraryPrimitive = oneof
+  [ pure AMQPNull
+  , AMQPBool <$> arbitrary
+  , AMQPUByte <$> arbitrary
+  , AMQPUShort <$> arbitrary
+  , AMQPUInt <$> arbitrary
+  , AMQPULong <$> arbitrary
+  , AMQPByte <$> arbitrary
+  , AMQPShort <$> arbitrary
+  , AMQPInt <$> arbitrary
+  , AMQPLong <$> arbitrary
+  , AMQPFloat <$> arbitrary
+  , AMQPDouble <$> arbitrary
+  , AMQPTimestamp <$> arbitraryTimestamp
+  , AMQPUuid <$> arbitraryUUID
+  , AMQPBinary <$> arbitraryByteString
+  , AMQPString <$> arbitraryText
+  , AMQPSymbol <$> arbitraryText
+  ]
+
 -- | Arbitrary instances for primitive AMQP types
 instance Arbitrary AMQPValue where
-  arbitrary = oneof
-    [ pure AMQPNull
-    , AMQPBool <$> arbitrary
-    , AMQPUByte <$> arbitrary
-    , AMQPUShort <$> arbitrary
-    , AMQPUInt <$> arbitrary
-    , AMQPULong <$> arbitrary
-    , AMQPByte <$> arbitrary
-    , AMQPShort <$> arbitrary
-    , AMQPInt <$> arbitrary
-    , AMQPLong <$> arbitrary
-    , AMQPFloat <$> arbitrary
-    , AMQPDouble <$> arbitrary
-    , AMQPTimestamp <$> arbitraryTimestamp
-    , AMQPUuid <$> arbitraryUUID
-    , AMQPBinary <$> arbitraryByteString
-    , AMQPString <$> arbitraryText
-    , AMQPSymbol <$> arbitraryText
-    ]
-    where
-      -- Generate valid timestamp (positive POSIXTime from Word64)
-      arbitraryTimestamp = do
-        w <- arbitrary :: Gen Word64
-        return $ fromIntegral w / 1000.0  -- Convert to seconds
-      -- Generate random UUID
-      arbitraryUUID = do
-        w1 <- arbitrary
-        w2 <- arbitrary
-        w3 <- arbitrary
-        w4 <- arbitrary
-        return $ fromWords w1 w2 w3 w4
-      -- Generate ByteString
-      arbitraryByteString = BS.pack <$> arbitrary
-      -- Generate Text (ASCII subset for simplicity)
-      arbitraryText = T.pack <$> listOf (elements ['a'..'z'])
+  arbitrary = arbitraryPrimitive
 
 main :: IO ()
 main = defaultMain tests
@@ -116,6 +131,12 @@ tests = testGroup "AMQP Tests"
           -- Use ASCII subset for safety
           let text = T.pack (filter (\c -> c >= ' ' && c <= '~') s)
           in prop_roundtrip (AMQPSymbol text)
+      , testProperty "empty list roundtrip" $ \() ->
+          prop_roundtrip (AMQPList [])
+      , testProperty "list with primitives roundtrip" $
+          -- Use small lists with primitive types only (avoid recursion for now)
+          forAll (listOf1 arbitraryPrimitive) $ \items ->
+            prop_roundtrip (AMQPList items)
       ]
   , testGroup "Decoding"
       [ testCase "0x40 decodes to null" $
@@ -206,5 +227,19 @@ tests = testGroup "AMQP Tests"
       , testCase "double encodes to 0x82 + 8 bytes" $
           -- 1.0 in IEEE 754 double precision is 0x3FF0000000000000
           runPut (putAMQPValue (AMQPDouble 1.0)) @?= LBS.pack [0x82, 0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      -- list: 0x45 (empty), 0xc0 (list8), 0xd0 (list32)
+      , testCase "empty list encodes to list0 (0x45)" $
+          runPut (putAMQPValue (AMQPList [])) @?= LBS.pack [0x45]
+      , testCase "list with null encodes to list8 (0xc0)" $
+          -- list8: 0xc0 + size(1 byte) + count(1 byte) + items
+          -- items: [null=0x40]
+          -- size = 1 (count byte) + 1 (null byte) = 2, but size includes count so size = 1 + items_size = 1 + 1 = 2
+          runPut (putAMQPValue (AMQPList [AMQPNull])) @?= LBS.pack [0xc0, 0x02, 0x01, 0x40]
+      , testCase "list with mixed types encodes to list8 (0xc0)" $
+          -- list8: 0xc0 + size + count + [null, true, uint0]
+          -- items: [0x40, 0x41, 0x43] = 3 bytes
+          -- size = 1 (count byte) + 3 (items) = 4
+          runPut (putAMQPValue (AMQPList [AMQPNull, AMQPBool True, AMQPUInt 0])) @?=
+            LBS.pack [0xc0, 0x04, 0x03, 0x40, 0x41, 0x43]
       ]
   ]
