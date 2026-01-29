@@ -8,13 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Dev environment: use `shell.nix`
 - Haskell: Stack with `nix: true` in stack.yaml, choose GHC version that minimizes rebuilds
 
-## Claude Code Model Preferences
+## Haskell OpenSpec Workflow
 
-- Haskell-related subagent tasks: use Claude Sonnet for better code understanding and analysis
+**Haskell OpenSpec tasks must be delegated to a Haskell subagent** (Claude Sonnet). Do not implement Haskell tasks directly. Instead, use the Task tool to spawn a Sonnet subagent with:
+- `subagent_type: "general-purpose"` or specialized agent if available
+- `model: "sonnet"`
+- Clear task description with context from artifacts
 
-## Commits for Haskell Subagents
+## Commits for Haskell Tasks
 
-When working on Haskell tasks in OpenSpec apply workflow:
+When implementing Haskell tasks (via subagent):
 - **Commit after every completed task** - don't wait for multiple tasks
 - Use conventional commits format: `type(scope): description`
   - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `build`
