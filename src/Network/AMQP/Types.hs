@@ -8,14 +8,16 @@ module Network.AMQP.Types
   , putAMQPValue
   ) where
 
-import Data.Binary.Put (Put, putWord8, putWord16be, putWord32be, putWord64be, putInt8, putInt16be, putInt32be, putInt64be, putByteString)
+import Data.Binary.Put (Put, putWord8, putWord16be, putWord32be, putWord64be, putInt8, putInt16be, putInt32be, putInt64be, putByteString, putFloatbe, putDoublebe)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.UUID (UUID)
+import qualified Data.UUID as UUID
 import Data.Word (Word8, Word16, Word32, Word64)
 
 -- | Represents all AMQP 1.0 primitive and composite types.
@@ -90,4 +92,15 @@ putAMQPValue (AMQPBinary bs) =
   in if len <= 255
      then putWord8 0xa0 >> putWord8 (fromIntegral len) >> putByteString bs  -- vbin8
      else putWord8 0xb0 >> putWord32be (fromIntegral len) >> putByteString bs  -- vbin32
+-- UUID: 0x98 + 16 bytes
+putAMQPValue (AMQPUuid uuid) =
+  putWord8 0x98 >> putByteString (LBS.toStrict (UUID.toByteString uuid))
+-- Timestamp: 0x83 + 8 bytes (milliseconds since Unix epoch)
+putAMQPValue (AMQPTimestamp t) =
+  let millis = floor (t * 1000) :: Int64
+  in putWord8 0x83 >> putInt64be millis
+-- Float: 0x72 + 4 bytes IEEE 754
+putAMQPValue (AMQPFloat f) = putWord8 0x72 >> putFloatbe f
+-- Double: 0x82 + 8 bytes IEEE 754
+putAMQPValue (AMQPDouble d) = putWord8 0x82 >> putDoublebe d
 putAMQPValue _ = error "putAMQPValue: not yet implemented"

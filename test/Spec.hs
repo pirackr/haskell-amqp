@@ -5,6 +5,8 @@ import Test.Tasty.HUnit
 import Data.Binary.Put (runPut)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LBS
+import Data.Time.Clock.POSIX (POSIXTime)
+import Data.UUID (fromWords)
 
 import Network.AMQP.Types
 
@@ -78,5 +80,25 @@ tests = testGroup "AMQP Tests"
           runPut (putAMQPValue (AMQPBinary "")) @?= LBS.pack [0xa0, 0x00]
       , testCase "binary short encodes to vbin8 (0xa0)" $
           runPut (putAMQPValue (AMQPBinary "\x01\x02\x03")) @?= LBS.pack [0xa0, 0x03, 0x01, 0x02, 0x03]
+      -- uuid: 0x98 + 16 bytes
+      , testCase "uuid encodes to 0x98 + 16 bytes" $
+          -- UUID: 00112233-4455-6677-8899-aabbccddeeff
+          let uuid = fromWords 0x00112233 0x44556677 0x8899aabb 0xccddeeff
+          in runPut (putAMQPValue (AMQPUuid uuid)) @?=
+             LBS.pack [0x98, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                       0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]
+      -- timestamp: 0x83 + 8 bytes (milliseconds since epoch)
+      , testCase "timestamp encodes to 0x83 + 8 bytes" $
+          -- 1000 seconds = 1000000 milliseconds = 0x00000000000F4240
+          runPut (putAMQPValue (AMQPTimestamp 1000)) @?=
+            LBS.pack [0x83, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0F, 0x42, 0x40]
+      -- float: 0x72 + 4 bytes IEEE 754
+      , testCase "float encodes to 0x72 + 4 bytes" $
+          -- 1.0 in IEEE 754 single precision is 0x3F800000
+          runPut (putAMQPValue (AMQPFloat 1.0)) @?= LBS.pack [0x72, 0x3F, 0x80, 0x00, 0x00]
+      -- double: 0x82 + 8 bytes IEEE 754
+      , testCase "double encodes to 0x82 + 8 bytes" $
+          -- 1.0 in IEEE 754 double precision is 0x3FF0000000000000
+          runPut (putAMQPValue (AMQPDouble 1.0)) @?= LBS.pack [0x82, 0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
       ]
   ]

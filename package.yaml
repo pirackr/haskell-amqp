@@ -34,3 +34,5 @@ tests:
       - QuickCheck
       - bytestring
       - binary
+      - time
+      - uuid
