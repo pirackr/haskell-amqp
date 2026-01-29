@@ -8,6 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Dev environment: use `shell.nix`
 - Haskell: Stack with `nix: true` in stack.yaml, choose GHC version that minimizes rebuilds
 
+## Claude Code Model Preferences
+
+- Haskell-related subagent tasks: use Claude Sonnet for better code understanding and analysis
+
 ## Commits
 
 - Commit after completing each task
