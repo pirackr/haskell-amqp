@@ -1,0 +1,20 @@
+? /home/pirackr/.stack/programs/x86_64-linux/ghc-tinfo6-9.6.6/lib/ghc-9.6.6/lib/x86_64-linux-ghc-9.6.6/rts-1.0.2/include/ghcversion.h
+: hash: 9032f6afc97dcddfe8c8b306639eb6f456e3f6667f3dd8268681f51bb77c8634
+? /home/pirackr/Working/github.com/pirackr/haskell-amqp/.stack-work/dist/x86_64-linux-tinfo6/ghc-9.6.6/build/autogen/Paths_haskell_amqp.hs
+: hash: 40e015611cdf4b72b7f01f7ee8187b1f13e8e64ac084862548630254f88ac62b
+? /home/pirackr/Working/github.com/pirackr/haskell-amqp/.stack-work/dist/x86_64-linux-tinfo6/ghc-9.6.6/build/autogen/cabal_macros.h
+: hash: 38e80bd246dca748ba66d9f4d197353cbc89872026a0f23ad45813031fe26bc6
+/home/pirackr/Working/github.com/pirackr/haskell-amqp/haskell-amqp.cabal:
+  hash: 8f4fc98eae1e8f036d0d03163355c04b893c4bc34cef2ce85c27e7ec8cf18e9d
+/home/pirackr/Working/github.com/pirackr/haskell-amqp/package.yaml:
+  hash: ff23f47a41de7672abc690d29969b0284dc427a768bb9081e787dad48b530b30
+/home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Client.hs:
+  hash: 2e7397efe322f419fc35e1f9a74015ba3f0351ccfa8b19adc7207fccfbba5f41
+/home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Connection.hs:
+  hash: 6cd5b33c69d17edb835830bbadf4f8087945637a80f64b4b61882a9ff36e7f6c
+/home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Transport.hs:
+  hash: 021518e1a4414de42d5c6430c3c0a37fea906d027853222ec6c3f74c51bc1cfa
+/home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Types.hs:
+  hash: 9a1d992a7baad9a64494fd7096e768a9db8bf034cf440ab5e08c879a69eae583
+/nix/store/gf3wh0x0rzb1dkx0wx1jvmipydwfzzd5-glibc-2.40-66-dev/include/stdc-predef.h:
+  hash: 8db4f65e62cade8ae4d9b77960ee6aee093255acc1b637e3fb37d79179733b15

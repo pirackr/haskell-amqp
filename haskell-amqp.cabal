@@ -1,0 +1,57 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.38.1.
+--
+-- see: https://github.com/sol/hpack
+
+name:           haskell-amqp
+version:        0.1.0.0
+synopsis:       AMQP 1.0 client library for Haskell
+description:    A learning-focused implementation of AMQP 1.0 protocol client
+author:         pirackr
+maintainer:     pirackr
+license:        MIT
+build-type:     Simple
+
+library
+  exposed-modules:
+      Network.AMQP.Client
+      Network.AMQP.Connection
+      Network.AMQP.Transport
+      Network.AMQP.Types
+  other-modules:
+      Paths_haskell_amqp
+  hs-source-dirs:
+      src
+  build-depends:
+      async
+    , base >=4.14 && <5
+    , binary
+    , bytestring
+    , containers
+    , network
+    , stm
+    , text
+    , time
+    , uuid
+  default-language: Haskell2010
+
+test-suite haskell-amqp-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_haskell_amqp
+  hs-source-dirs:
+      test
+  build-depends:
+      QuickCheck
+    , base >=4.14 && <5
+    , binary
+    , bytestring
+    , haskell-amqp
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
+    , time
+    , uuid
+  default-language: Haskell2010

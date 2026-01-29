@@ -49,6 +49,19 @@ nix:
 
 shell.nix provides system dependencies; Stack handles Haskell deps.
 
+**Running commands outside nix-shell**:
+```bash
+# Use nix-shell --run for one-off commands
+nix-shell --run "stack build"
+nix-shell --run "stack test"
+
+# Or enter nix-shell first
+nix-shell
+stack test
+```
+
+Never use cabal directly - always use stack.
+
 ## Common Patterns
 
 - Use `Text` over `String` for text data

@@ -2,6 +2,7 @@
 
 import Test.Tasty
 import Test.Tasty.HUnit
+import Data.Binary.Get (runGet)
 import Data.Binary.Put (runPut)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LBS
@@ -15,7 +16,11 @@ main = defaultMain tests
 
 tests :: TestTree
 tests = testGroup "AMQP Tests"
-  [ testGroup "Encoding"
+  [ testGroup "Decoding"
+      [ testCase "0x40 decodes to null" $
+          runGet getAMQPValue (LBS.pack [0x40]) @?= AMQPNull
+      ]
+  , testGroup "Encoding"
       [ testCase "null encodes to 0x40" $
           runPut (putAMQPValue AMQPNull) @?= LBS.pack [0x40]
       , testCase "true encodes to 0x41" $

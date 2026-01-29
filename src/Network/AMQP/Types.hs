@@ -6,8 +6,11 @@ module Network.AMQP.Types
     AMQPValue(..)
     -- * Encoding
   , putAMQPValue
+    -- * Decoding
+  , getAMQPValue
   ) where
 
+import Data.Binary.Get (Get, getWord8)
 import Data.Binary.Put (Put, putWord8, putWord16be, putWord32be, putWord64be, putInt8, putInt16be, putInt32be, putInt64be, putByteString, putFloatbe, putDoublebe)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -104,3 +107,11 @@ putAMQPValue (AMQPFloat f) = putWord8 0x72 >> putFloatbe f
 -- Double: 0x82 + 8 bytes IEEE 754
 putAMQPValue (AMQPDouble d) = putWord8 0x82 >> putDoublebe d
 putAMQPValue _ = error "putAMQPValue: not yet implemented"
+
+-- | Decode an AMQP value from its binary representation.
+getAMQPValue :: Get AMQPValue
+getAMQPValue = do
+  typeCode <- getWord8
+  case typeCode of
+    0x40 -> return AMQPNull
+    _    -> fail $ "getAMQPValue: unknown type code " ++ show typeCode
