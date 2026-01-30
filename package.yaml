@@ -44,3 +44,7 @@ tests:
       - time
       - uuid
       - text
+      - network
+      - stm
+      - containers
+      - async

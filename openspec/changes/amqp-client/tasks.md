@@ -103,7 +103,7 @@
 - [x] 10.7 Add connection state tracking in mock
 - [x] 10.8 Add session state tracking in mock
 - [x] 10.9 Add link state tracking in mock
-- [ ] 10.10 Write tests verifying mock handles basic handshake
+- [x] 10.10 Write tests verifying mock handles basic handshake
 
 ## 11. Testing - Mock Message Handling
 

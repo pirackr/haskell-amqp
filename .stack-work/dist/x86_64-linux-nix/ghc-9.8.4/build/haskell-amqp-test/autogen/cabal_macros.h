@@ -20,6 +20,16 @@
   (major1) == 2 && (major2) <  14 || \
   (major1) == 2 && (major2) == 14 && (minor) <= 3)
 #endif /* MIN_VERSION_QuickCheck */
+/* package async-2.2.5 */
+#ifndef VERSION_async
+#define VERSION_async "2.2.5"
+#endif /* VERSION_async */
+#ifndef MIN_VERSION_async
+#define MIN_VERSION_async(major1,major2,minor) (\
+  (major1) <  2 || \
+  (major1) == 2 && (major2) <  2 || \
+  (major1) == 2 && (major2) == 2 && (minor) <= 5)
+#endif /* MIN_VERSION_async */
 /* package base-4.19.2.0 */
 #ifndef VERSION_base
 #define VERSION_base "4.19.2.0"
@@ -50,6 +60,16 @@
   (major1) == 0 && (major2) <  12 || \
   (major1) == 0 && (major2) == 12 && (minor) <= 1)
 #endif /* MIN_VERSION_bytestring */
+/* package containers-0.6.8 */
+#ifndef VERSION_containers
+#define VERSION_containers "0.6.8"
+#endif /* VERSION_containers */
+#ifndef MIN_VERSION_containers
+#define MIN_VERSION_containers(major1,major2,minor) (\
+  (major1) <  0 || \
+  (major1) == 0 && (major2) <  6 || \
+  (major1) == 0 && (major2) == 6 && (minor) <= 8)
+#endif /* MIN_VERSION_containers */
 /* package haskell-amqp-0.1.0.0 */
 #ifndef VERSION_haskell_amqp
 #define VERSION_haskell_amqp "0.1.0.0"
@@ -60,6 +80,26 @@
   (major1) == 0 && (major2) <  1 || \
   (major1) == 0 && (major2) == 1 && (minor) <= 0)
 #endif /* MIN_VERSION_haskell_amqp */
+/* package network-3.2.7.0 */
+#ifndef VERSION_network
+#define VERSION_network "3.2.7.0"
+#endif /* VERSION_network */
+#ifndef MIN_VERSION_network
+#define MIN_VERSION_network(major1,major2,minor) (\
+  (major1) <  3 || \
+  (major1) == 3 && (major2) <  2 || \
+  (major1) == 3 && (major2) == 2 && (minor) <= 7)
+#endif /* MIN_VERSION_network */
+/* package stm-2.5.3.1 */
+#ifndef VERSION_stm
+#define VERSION_stm "2.5.3.1"
+#endif /* VERSION_stm */
+#ifndef MIN_VERSION_stm
+#define MIN_VERSION_stm(major1,major2,minor) (\
+  (major1) <  2 || \
+  (major1) == 2 && (major2) <  5 || \
+  (major1) == 2 && (major2) == 5 && (minor) <= 3)
+#endif /* MIN_VERSION_stm */
 /* package tasty-1.5.2 */
 #ifndef VERSION_tasty
 #define VERSION_tasty "1.5.2"

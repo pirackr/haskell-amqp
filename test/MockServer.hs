@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Mock AMQP 1.0 server for testing
 module MockServer
@@ -11,6 +12,8 @@ module MockServer
   , MockConnectionState(..)
   , MockSessionState(..)
   , MockLinkState(..)
+    -- * Protocol
+  , amqpProtocolHeader
   ) where
 
 import Control.Concurrent (ThreadId, forkIO, killThread, myThreadId)
@@ -43,11 +46,11 @@ import Network.Socket
   , defaultHints
   , SocketOption(..)
   , setSocketOption
+  , socketToHandle
   )
 import qualified Network.Socket as Socket
 import qualified Network.Socket.ByteString as SBS
-import System.IO (Handle, hClose, hSetBuffering, BufferMode(..))
-import Network.Socket (socketToHandle, IOMode(..))
+import System.IO (Handle, hClose, hSetBuffering, BufferMode(..), IOMode(..))
 
 import Network.AMQP.Transport
 import Network.AMQP.Performatives

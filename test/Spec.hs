@@ -5,12 +5,12 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
 import Test.QuickCheck
-import Data.Binary.Get (runGet, runGetOrFail)
+import Data.Binary.Get (Get, runGet, runGetOrFail, getWord8)
 import Data.Binary.Put (runPut)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString as BS
-import Control.Exception (try, evaluate, ErrorCall)
+import Control.Exception (try, evaluate, ErrorCall, bracket)
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.UUID (UUID, fromWords)
 import qualified Data.UUID as UUID
@@ -18,10 +18,15 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Word (Word8, Word16, Word32, Word64)
+import Data.Bits as Bits
+import Network.Socket (Socket, SocketType(..), socket, connect, close, SockAddr(..), socketToHandle)
+import qualified Network.Socket as Socket
+import System.IO (Handle, hClose, hSetBuffering, BufferMode(..), IOMode(..))
 
 import Network.AMQP.Types
 import Network.AMQP.Transport
 import Network.AMQP.Messaging
+import MockServer
 
 -- -----------------------------------------------------------------------------
 -- Test Helpers and Utilities
@@ -127,6 +132,7 @@ tests = testGroup "AMQP Tests"
   , stateMachineTests
   , messagingTests
   , deliveryStateTests
+  , mockServerTests
   ]
 
 -- -----------------------------------------------------------------------------
@@ -1532,3 +1538,345 @@ modifiedTests = testGroup "Modified State"
            AMQPDescribed (AMQPULong 0x00000027) _ -> return ()
            _ -> assertFailure "Expected descriptor 0x27"
   ]
+
+-- -----------------------------------------------------------------------------
+-- Mock Server Tests
+-- -----------------------------------------------------------------------------
+
+mockServerTests :: TestTree
+mockServerTests = testGroup "Mock Server"
+  [ testCase "server starts and stops" $ do
+      server <- startMockServer 15672
+      stopMockServer server
+  , testCase "protocol header exchange" $ withMockServer 15673 $ \port -> do
+      -- Connect to mock server
+      handle <- connectToMockServer port
+
+      -- Send protocol header
+      BS.hPut handle amqpProtocolHeader
+
+      -- Receive protocol header
+      serverHeader <- BS.hGet handle 8
+      serverHeader @?= amqpProtocolHeader
+
+      hClose handle
+  , testCase "OPEN/CLOSE handshake" $ withMockServer 15674 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Protocol header exchange
+      BS.hPut handle amqpProtocolHeader
+      _ <- BS.hGet handle 8
+
+      -- Send OPEN
+      let clientOpen = Open
+            { openContainerId = "test-client"
+            , openHostname = Nothing
+            , openMaxFrameSize = Just 65536
+            , openChannelMax = Just 255
+            , openIdleTimeOut = Nothing
+            , openOutgoingLocales = Nothing
+            , openIncomingLocales = Nothing
+            , openOfferedCapabilities = Nothing
+            , openDesiredCapabilities = Nothing
+            , openProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeOpen clientOpen)
+
+      -- Receive OPEN
+      serverOpenPerf <- recvPerf handle
+      case serverOpenPerf of
+        Just (PerformativeOpen serverOpen) -> do
+          openContainerId serverOpen @?= "mock-server"
+        _ -> assertFailure "Expected OPEN performative"
+
+      -- Send CLOSE
+      let clientClose = Close { closeError = Nothing }
+      sendPerf handle 0 (PerformativeClose clientClose)
+
+      -- Receive CLOSE
+      serverClosePerf <- recvPerf handle
+      case serverClosePerf of
+        Just (PerformativeClose _) -> return ()
+        _ -> assertFailure "Expected CLOSE performative"
+
+      hClose handle
+  , testCase "BEGIN/END handshake" $ withMockServer 15675 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Protocol header + OPEN
+      performOpenHandshake handle
+
+      -- Send BEGIN
+      let clientBegin = Begin
+            { beginRemoteChannel = Nothing
+            , beginNextOutgoingId = 0
+            , beginIncomingWindow = 2048
+            , beginOutgoingWindow = 2048
+            , beginHandleMax = Nothing
+            , beginOfferedCapabilities = Nothing
+            , beginDesiredCapabilities = Nothing
+            , beginProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeBegin clientBegin)
+
+      -- Receive BEGIN
+      serverBeginPerf <- recvPerf handle
+      case serverBeginPerf of
+        Just (PerformativeBegin serverBegin) -> do
+          beginRemoteChannel serverBegin @?= Just 0
+        _ -> assertFailure "Expected BEGIN performative"
+
+      -- Send END
+      let clientEnd = End { endError = Nothing }
+      sendPerf handle 0 (PerformativeEnd clientEnd)
+
+      -- Receive END
+      serverEndPerf <- recvPerf handle
+      case serverEndPerf of
+        Just (PerformativeEnd _) -> return ()
+        _ -> assertFailure "Expected END performative"
+
+      hClose handle
+  , testCase "ATTACH/DETACH handshake" $ withMockServer 15676 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Protocol header + OPEN + BEGIN
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      -- Send ATTACH
+      let source = Source $ Terminus
+            { terminusAddress = Just "test-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      let clientAttach = Attach
+            { attachName = "test-link"
+            , attachHandle = 0
+            , attachRole = RoleSender
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Just source
+            , attachTarget = Nothing
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Nothing
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeAttach clientAttach)
+
+      -- Receive ATTACH
+      serverAttachPerf <- recvPerf handle
+      case serverAttachPerf of
+        Just (PerformativeAttach serverAttach) -> do
+          attachName serverAttach @?= "test-link"
+          attachRole serverAttach @?= RoleReceiver  -- Opposite role
+        _ -> assertFailure "Expected ATTACH performative"
+
+      -- Send DETACH
+      let clientDetach = Detach
+            { detachHandle = 0
+            , detachClosed = Nothing
+            , detachError = Nothing
+            }
+      sendPerf handle 0 (PerformativeDetach clientDetach)
+
+      -- Receive DETACH
+      serverDetachPerf <- recvPerf handle
+      case serverDetachPerf of
+        Just (PerformativeDetach serverDetach) -> do
+          detachHandle serverDetach @?= 0
+        _ -> assertFailure "Expected DETACH performative"
+
+      hClose handle
+  , testCase "complete handshake flow" $ withMockServer 15677 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Full handshake: header + OPEN + BEGIN + ATTACH
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+      performAttachHandshake handle 0 0 "complete-test-link" RoleSender
+
+      -- Clean shutdown: DETACH + END + CLOSE
+      performDetachHandshake handle 0 0
+      performEndHandshake handle 0
+      performCloseHandshake handle
+
+      hClose handle
+  ]
+
+-- Helper: with mock server
+withMockServer :: Int -> (Int -> IO a) -> IO a
+withMockServer port action =
+  bracket (startMockServer port) stopMockServer (\_ -> action port)
+
+-- Helper: connect to mock server
+connectToMockServer :: Int -> IO Handle
+connectToMockServer port = do
+  sock <- socket Socket.AF_INET Socket.Stream Socket.defaultProtocol
+  connect sock (Socket.SockAddrInet (fromIntegral port) (Socket.tupleToHostAddress (127, 0, 0, 1)))
+  handle <- socketToHandle sock ReadWriteMode
+  hSetBuffering handle NoBuffering
+  return handle
+
+-- Helper: send performative
+sendPerf :: Handle -> Word16 -> Performative -> IO ()
+sendPerf handle channel perf = do
+  let payload = LBS.toStrict $ runPut (putPerformative perf)
+  let frame = Frame AMQPFrameType channel payload
+  let frameBytes = LBS.toStrict $ runPut (putFrame frame)
+  BS.hPut handle frameBytes
+
+-- Helper: receive performative
+recvPerf :: Handle -> IO (Maybe Performative)
+recvPerf handle = do
+  -- Read frame size
+  sizeBytes <- BS.hGet handle 4
+  if BS.length sizeBytes < 4
+    then return Nothing
+    else do
+      let size = runGet getWord32be (LBS.fromStrict sizeBytes)
+      -- Read rest of frame
+      restBytes <- BS.hGet handle (fromIntegral size - 4)
+      let frameBytes = sizeBytes <> restBytes
+
+      -- Parse frame
+      case runGetOrFail getFrame (LBS.fromStrict frameBytes) of
+        Left _ -> return Nothing
+        Right (_, _, frame) -> do
+          -- Parse performative
+          case runGetOrFail getPerformative (LBS.fromStrict (framePayload frame)) of
+            Left _ -> return Nothing
+            Right (_, _, perf) -> return (Just perf)
+
+-- Helper: getWord32be for reading frame size
+getWord32be :: Get Word32
+getWord32be = do
+  b1 <- getWord8
+  b2 <- getWord8
+  b3 <- getWord8
+  b4 <- getWord8
+  return $ (fromIntegral b1 `shiftL` 24) .|.
+           (fromIntegral b2 `shiftL` 16) .|.
+           (fromIntegral b3 `shiftL` 8) .|.
+           fromIntegral b4
+  where
+    shiftL = Bits.shiftL
+    (.|.) = (Bits..|.)
+
+-- Helper: perform OPEN handshake
+performOpenHandshake :: Handle -> IO ()
+performOpenHandshake handle = do
+  -- Send protocol header
+  BS.hPut handle amqpProtocolHeader
+  -- Receive protocol header
+  _ <- BS.hGet handle 8
+
+  -- Send OPEN
+  let clientOpen = Open
+        { openContainerId = "test-client"
+        , openHostname = Nothing
+        , openMaxFrameSize = Just 65536
+        , openChannelMax = Just 255
+        , openIdleTimeOut = Nothing
+        , openOutgoingLocales = Nothing
+        , openIncomingLocales = Nothing
+        , openOfferedCapabilities = Nothing
+        , openDesiredCapabilities = Nothing
+        , openProperties = Nothing
+        }
+  sendPerf handle 0 (PerformativeOpen clientOpen)
+
+  -- Receive OPEN
+  _ <- recvPerf handle
+  return ()
+
+-- Helper: perform BEGIN handshake
+performBeginHandshake :: Handle -> Word16 -> IO ()
+performBeginHandshake handle channel = do
+  -- Send BEGIN
+  let clientBegin = Begin
+        { beginRemoteChannel = Nothing
+        , beginNextOutgoingId = 0
+        , beginIncomingWindow = 2048
+        , beginOutgoingWindow = 2048
+        , beginHandleMax = Nothing
+        , beginOfferedCapabilities = Nothing
+        , beginDesiredCapabilities = Nothing
+        , beginProperties = Nothing
+        }
+  sendPerf handle channel (PerformativeBegin clientBegin)
+
+  -- Receive BEGIN
+  _ <- recvPerf handle
+  return ()
+
+-- Helper: perform ATTACH handshake
+performAttachHandshake :: Handle -> Word16 -> Word32 -> Text -> Role -> IO ()
+performAttachHandshake handle channel linkHandle name role = do
+  -- Send ATTACH
+  let clientAttach = Attach
+        { attachName = name
+        , attachHandle = linkHandle
+        , attachRole = role
+        , attachSndSettleMode = Nothing
+        , attachRcvSettleMode = Nothing
+        , attachSource = Nothing
+        , attachTarget = Nothing
+        , attachUnsettled = Nothing
+        , attachIncompleteUnsettled = Nothing
+        , attachInitialDeliveryCount = if role == RoleReceiver then Just 0 else Nothing
+        , attachMaxMessageSize = Nothing
+        , attachOfferedCapabilities = Nothing
+        , attachDesiredCapabilities = Nothing
+        , attachProperties = Nothing
+        }
+  sendPerf handle channel (PerformativeAttach clientAttach)
+
+  -- Receive ATTACH
+  _ <- recvPerf handle
+  return ()
+
+-- Helper: perform DETACH handshake
+performDetachHandshake :: Handle -> Word16 -> Word32 -> IO ()
+performDetachHandshake handle channel linkHandle = do
+  -- Send DETACH
+  let clientDetach = Detach
+        { detachHandle = linkHandle
+        , detachClosed = Nothing
+        , detachError = Nothing
+        }
+  sendPerf handle channel (PerformativeDetach clientDetach)
+
+  -- Receive DETACH
+  _ <- recvPerf handle
+  return ()
+
+-- Helper: perform END handshake
+performEndHandshake :: Handle -> Word16 -> IO ()
+performEndHandshake handle channel = do
+  -- Send END
+  let clientEnd = End { endError = Nothing }
+  sendPerf handle channel (PerformativeEnd clientEnd)
+
+  -- Receive END
+  _ <- recvPerf handle
+  return ()
+
+-- Helper: perform CLOSE handshake
+performCloseHandshake :: Handle -> IO ()
+performCloseHandshake handle = do
+  -- Send CLOSE
+  let clientClose = Close { closeError = Nothing }
+  sendPerf handle 0 (PerformativeClose clientClose)
+
+  -- Receive CLOSE
+  _ <- recvPerf handle
+  return ()

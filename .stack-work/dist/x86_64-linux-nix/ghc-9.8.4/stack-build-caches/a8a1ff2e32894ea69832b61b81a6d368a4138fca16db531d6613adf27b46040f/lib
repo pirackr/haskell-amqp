@@ -3,9 +3,9 @@
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/.stack-work/dist/x86_64-linux-nix/ghc-9.8.4/build/autogen/cabal_macros.h:
   hash: ddbb4bff3c03921d98a494481785553ec3ea77bcc43d2a7fc39f1267781f7ddd
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/haskell-amqp.cabal:
-  hash: 52556c7a63bf1cc2cf7221542822db26c40b4e5027722b89541c90c889ea7589
+  hash: 1a495e392a956ee6c1350cdf72b4c526070ecb4e4086339f44488e2aa63f81b1
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/package.yaml:
-  hash: f9bfcfb10964b460022990a51378f2fbe8ef025ec36535910be171b618882fd1
+  hash: ea200278ac798f3fe3a902b7e35a545d91b901a359829d834d0d63c8a42b9a5a
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Client.hs:
   hash: 2e7397efe322f419fc35e1f9a74015ba3f0351ccfa8b19adc7207fccfbba5f41
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Connection.hs:
