@@ -91,6 +91,8 @@ data MockConnectionState = MockConnectionState
 data MockSessionState = MockSessionState
   { mockSessState :: SessionState
   , mockSessLinks :: Map Word32 MockLinkState
+  , mockSessNextOutgoingId :: Word32
+  , mockSessNextIncomingId :: Word32
   }
 
 -- | Per-link state
@@ -101,6 +103,8 @@ data MockLinkState = MockLinkState
   , mockLinkTransfers :: [(Word32, ByteString)]  -- (delivery-id, payload)
   , mockLinkTargetAddress :: Maybe Text  -- Target address for sender links
   , mockLinkSourceAddress :: Maybe Text  -- Source address for receiver links
+  , mockLinkCredit :: Word32  -- Available link credit
+  , mockLinkDeliveryCount :: Word32  -- Delivery count for the link
   }
 
 -- | Start a mock AMQP server on the specified port
@@ -415,6 +419,15 @@ handlePerformative handle stateVar channel perf = case perf of
         sendPerformative handle channel (PerformativeDisposition disposition)
       Nothing -> return ()
 
+  -- FLOW handling
+  PerformativeFlow clientFlow -> do
+    -- Update link credit if this is a link flow (handle is present)
+    case flowHandle clientFlow of
+      Just linkHandle -> do
+        -- Update link credit
+        updateLinkCredit stateVar channel linkHandle (flowLinkCredit clientFlow)
+      Nothing -> return ()  -- Session-level flow, ignore for now
+
   _ -> return ()  -- Ignore other performatives for now
 
 -- | Send a performative on a channel
@@ -439,6 +452,8 @@ createSessionIfNeeded stateVar channel = do
             let newSessState = MockSessionState
                   { mockSessState = SessUnmapped
                   , mockSessLinks = Map.empty
+                  , mockSessNextOutgoingId = 0
+                  , mockSessNextIncomingId = 0
                   }
                 updatedSessions = Map.insert channel newSessState (mockConnSessions connState)
                 updatedConnState = connState { mockConnSessions = updatedSessions }
@@ -465,8 +480,32 @@ createLinkIfNeeded stateVar channel handle name role targetAddr sourceAddr = do
                       , mockLinkTransfers = []
                       , mockLinkTargetAddress = targetAddr
                       , mockLinkSourceAddress = sourceAddr
+                      , mockLinkCredit = 0
+                      , mockLinkDeliveryCount = 0
                       }
                     updatedLinks = Map.insert handle newLinkState (mockSessLinks sessState)
+                    updatedSessState = sessState { mockSessLinks = updatedLinks }
+                    updatedSessions = Map.insert channel updatedSessState (mockConnSessions connState)
+                    updatedConnState = connState { mockConnSessions = updatedSessions }
+                in s { mockConnections = Map.insert tid updatedConnState (mockConnections s) }
+
+-- | Update link credit based on FLOW performative
+updateLinkCredit :: TVar MockState -> Word16 -> Word32 -> Maybe Word32 -> IO ()
+updateLinkCredit stateVar channel linkHandle mCredit = do
+  tid <- myThreadId
+  atomically $ modifyTVar' stateVar $ \s ->
+    case Map.lookup tid (mockConnections s) of
+      Nothing -> s
+      Just connState ->
+        case Map.lookup channel (mockConnSessions connState) of
+          Nothing -> s
+          Just sessState ->
+            case Map.lookup linkHandle (mockSessLinks sessState) of
+              Nothing -> s
+              Just linkState ->
+                let credit = maybe 0 id mCredit
+                    updatedLinkState = linkState { mockLinkCredit = credit }
+                    updatedLinks = Map.insert linkHandle updatedLinkState (mockSessLinks sessState)
                     updatedSessState = sessState { mockSessLinks = updatedLinks }
                     updatedSessions = Map.insert channel updatedSessState (mockConnSessions connState)
                     updatedConnState = connState { mockConnSessions = updatedSessions }
