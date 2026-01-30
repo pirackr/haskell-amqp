@@ -22,6 +22,7 @@ module Network.AMQP.Messaging
   , getMessage
   , putDeliveryState
   , getDeliveryState
+  , encodeDeliveryState
   ) where
 
 import Data.Binary.Get (Get, isEmpty)

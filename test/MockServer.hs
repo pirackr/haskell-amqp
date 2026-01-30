@@ -54,6 +54,7 @@ import System.IO (Handle, hClose, hSetBuffering, BufferMode(..), IOMode(..))
 
 import Network.AMQP.Transport
 import Network.AMQP.Performatives
+import Network.AMQP.Messaging (DeliveryState(..), encodeDeliveryState)
 
 -- | AMQP 1.0 protocol header (8 bytes)
 -- Format: "AMQP" (0x41 0x4D 0x51 0x50) + protocol-id (0x00) + major (0x01) + minor (0x00) + revision (0x00)
@@ -381,7 +382,20 @@ handlePerformative handle stateVar channel perf = case perf of
   PerformativeTransfer transfer -> do
     -- Store the transfer in link state
     storeTransfer stateVar channel (transferHandle transfer) (transferDeliveryId transfer) BS.empty
-    return ()
+
+    -- Send DISPOSITION response if delivery-id is present
+    case transferDeliveryId transfer of
+      Just deliveryId -> do
+        let disposition = Disposition
+              { dispositionRole = RoleReceiver  -- Mock is receiver
+              , dispositionFirst = deliveryId
+              , dispositionLast = Nothing
+              , dispositionSettled = Just True
+              , dispositionState = Just (encodeDeliveryState StateAccepted)
+              , dispositionBatchable = Nothing
+              }
+        sendPerformative handle channel (PerformativeDisposition disposition)
+      Nothing -> return ()
 
   _ -> return ()  -- Ignore other performatives for now
 

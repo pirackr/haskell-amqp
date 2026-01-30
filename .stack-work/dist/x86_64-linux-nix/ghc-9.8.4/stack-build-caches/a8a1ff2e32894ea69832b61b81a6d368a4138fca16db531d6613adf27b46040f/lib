@@ -11,7 +11,7 @@
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Connection.hs:
   hash: 6cd5b33c69d17edb835830bbadf4f8087945637a80f64b4b61882a9ff36e7f6c
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Messaging.hs:
-  hash: bd08c65794dd9071054497cc9103851bac8927e2047bb3af769500b777fe2b70
+  hash: 195879305289e0a90cd73c170a481c86f5b442f1b6e0a2ffcc3e5226a3d9bd3b
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Performatives.hs:
   hash: b824b4c98829bb7af18b26b7c687591d8dcbd16b3545a58dc4f8d703c43a2881
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Transport.hs:

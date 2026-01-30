@@ -108,7 +108,7 @@
 ## 11. Testing - Mock Message Handling
 
 - [x] 11.1 Implement TRANSFER reception in mock
-- [ ] 11.2 Implement DISPOSITION sending from mock
+- [x] 11.2 Implement DISPOSITION sending from mock
 - [ ] 11.3 Implement message storage in mock
 - [ ] 11.4 Implement FLOW handling (credit granting)
 - [ ] 11.5 Implement message delivery to receivers

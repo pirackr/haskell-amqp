@@ -7,7 +7,7 @@
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/package.yaml:
   hash: ea200278ac798f3fe3a902b7e35a545d91b901a359829d834d0d63c8a42b9a5a
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/test/MockServer.hs:
-  hash: 92d594462d0cafed32dd788fa6e3f5b73fdbaea67aae93b0917eb42b21b09e5d
+  hash: a9f11ac094f6e71a620f38f7e2b6c12cefb4eeea718fb14a9c8813cf89ba6d66
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/test/Spec.hs:
   hash: b08403ed8854c01c613f5656453d6e09be65e68113fbc6283afc2085eefdc763
 /nix/store/gf3wh0x0rzb1dkx0wx1jvmipydwfzzd5-glibc-2.40-66-dev/include/stdc-predef.h:
