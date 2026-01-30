@@ -116,7 +116,7 @@
 
 ## 12. Testing - Error Injection
 
-- [ ] 12.1 Add error injection configuration type
+- [x] 12.1 Add error injection configuration type
 - [ ] 12.2 Implement connection refused injection
 - [ ] 12.3 Implement connection reset injection
 - [ ] 12.4 Implement slow response injection

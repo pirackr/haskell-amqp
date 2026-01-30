@@ -6,7 +6,10 @@ module MockServer
   ( -- * Server
     MockServer(..)
   , startMockServer
+  , startMockServerWithErrors
   , stopMockServer
+    -- * Error Injection
+  , ErrorInjection(..)
     -- * State
   , MockState(..)
   , MockConnectionState(..)
@@ -61,12 +64,26 @@ import Network.AMQP.Messaging (DeliveryState(..), encodeDeliveryState)
 amqpProtocolHeader :: ByteString
 amqpProtocolHeader = BS.pack [0x41, 0x4D, 0x51, 0x50, 0x00, 0x01, 0x00, 0x00]
 
+-- | Error injection configuration for testing error handling
+data ErrorInjection
+  = NoError                           -- ^ Normal operation, no errors
+  | ConnectionRefused                 -- ^ Refuse incoming connections
+  | ConnectionReset                   -- ^ Close connection unexpectedly
+  | SlowResponse Int                  -- ^ Delay responses by N milliseconds
+  | PartialFrame                      -- ^ Send incomplete frames
+  | MalformedFrame                    -- ^ Send frames with invalid data
+  | ZeroCredit                        -- ^ Grant zero credit on FLOW
+  | RejectDelivery                    -- ^ Reject messages with error state
+  | NoSettlement                      -- ^ Don't send DISPOSITION
+  deriving (Eq, Show)
+
 -- | Mock server handle
 data MockServer = MockServer
   { mockServerSocket :: Socket
   , mockServerThread :: ThreadId
   , mockServerPort :: Int
   , mockServerState :: TVar MockState
+  , mockServerErrorInjection :: ErrorInjection
   }
 
 -- | Stored message in a queue
@@ -78,6 +95,7 @@ data StoredMessage = StoredMessage
 -- | Overall mock server state
 data MockState = MockState
   { mockConnections :: Map ThreadId MockConnectionState
+  , mockErrorInjection :: ErrorInjection
   }
 
 -- | Per-connection state
@@ -107,12 +125,19 @@ data MockLinkState = MockLinkState
   , mockLinkDeliveryCount :: Word32  -- Delivery count for the link
   }
 
--- | Start a mock AMQP server on the specified port
+-- | Start a mock AMQP server on the specified port with optional error injection
 -- Returns the mock server handle
 startMockServer :: Int -> IO MockServer
-startMockServer port = withSocketsDo $ do
+startMockServer port = startMockServerWithErrors port NoError
+
+-- | Start a mock AMQP server with error injection enabled
+startMockServerWithErrors :: Int -> ErrorInjection -> IO MockServer
+startMockServerWithErrors port errorInjection = withSocketsDo $ do
   -- Create initial state
-  stateVar <- newTVarIO $ MockState { mockConnections = Map.empty }
+  stateVar <- newTVarIO $ MockState
+    { mockConnections = Map.empty
+    , mockErrorInjection = errorInjection
+    }
 
   -- Get address info for localhost
   let hints = defaultHints { addrFlags = [AI_PASSIVE], addrSocketType = Stream }
@@ -132,6 +157,7 @@ startMockServer port = withSocketsDo $ do
     , mockServerThread = tid
     , mockServerPort = port
     , mockServerState = stateVar
+    , mockServerErrorInjection = errorInjection
     }
 
 -- | Stop the mock server
