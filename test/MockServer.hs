@@ -19,7 +19,7 @@ module MockServer
 import Control.Concurrent (ThreadId, forkIO, killThread, myThreadId)
 import Control.Concurrent.STM
 import Control.Exception (bracket, finally, catch, SomeException)
-import Control.Monad (forever, when)
+import Control.Monad (forever, when, forM_)
 import Data.Binary.Get (runGet, runGetOrFail, getWord32be)
 import Data.Binary.Put (runPut)
 import Data.ByteString (ByteString)
@@ -387,6 +387,10 @@ handlePerformative handle stateVar channel perf = case perf of
     sendPerformative handle channel (PerformativeAttach serverAttach)
     updateLinkState stateVar channel (attachHandle clientAttach) LinkEvtSendAttach
 
+    -- If client is a receiver (mock is sender), deliver queued messages
+    when (attachRole clientAttach == RoleReceiver) $ do
+      deliverQueuedMessages handle stateVar channel (attachHandle clientAttach)
+
   -- DETACH handling
   PerformativeDetach clientDetach -> do
     updateLinkState stateVar channel (detachHandle clientDetach) LinkEvtRecvDetach
@@ -488,6 +492,51 @@ createLinkIfNeeded stateVar channel handle name role targetAddr sourceAddr = do
                     updatedSessions = Map.insert channel updatedSessState (mockConnSessions connState)
                     updatedConnState = connState { mockConnSessions = updatedSessions }
                 in s { mockConnections = Map.insert tid updatedConnState (mockConnections s) }
+
+-- | Deliver queued messages to a receiver link
+deliverQueuedMessages :: Handle -> TVar MockState -> Word16 -> Word32 -> IO ()
+deliverQueuedMessages handle stateVar channel linkHandle = do
+  tid <- myThreadId
+  -- Get source address and queued messages
+  (sourceAddr, messages, nextDeliveryId) <- atomically $ do
+    s <- readTVar stateVar
+    case Map.lookup tid (mockConnections s) of
+      Nothing -> return (Nothing, [], 0)
+      Just connState ->
+        case Map.lookup channel (mockConnSessions connState) of
+          Nothing -> return (Nothing, [], 0)
+          Just sessState ->
+            case Map.lookup linkHandle (mockSessLinks sessState) of
+              Nothing -> return (Nothing, [], 0)
+              Just linkState -> do
+                let addr = mockLinkSourceAddress linkState
+                let msgs = case addr of
+                      Just a -> Map.findWithDefault [] a (mockQueues connState)
+                      Nothing -> []
+                let nextId = mockSessNextOutgoingId sessState
+                return (addr, msgs, nextId)
+
+  -- Send each message as a TRANSFER
+  forM_ (zip [nextDeliveryId..] messages) $ \(deliveryId, msg) -> do
+    let transfer = Transfer
+          { transferHandle = linkHandle
+          , transferDeliveryId = Just deliveryId
+          , transferDeliveryTag = storedDeliveryTag msg
+          , transferMessageFormat = Just 0
+          , transferSettled = Just False
+          , transferMore = Just False
+          , transferRcvSettleMode = Nothing
+          , transferState = Nothing
+          , transferResume = Nothing
+          , transferAborted = Nothing
+          , transferBatchable = Nothing
+          }
+    -- Send TRANSFER performative + message payload in one frame
+    let transferBytes = LBS.toStrict $ runPut (putPerformative (PerformativeTransfer transfer))
+    let payload = transferBytes <> storedPayload msg
+    let frame = Frame AMQPFrameType channel payload
+    let frameBytes = LBS.toStrict $ runPut (putFrame frame)
+    BS.hPut handle frameBytes
 
 -- | Update link credit based on FLOW performative
 updateLinkCredit :: TVar MockState -> Word16 -> Word32 -> Maybe Word32 -> IO ()
