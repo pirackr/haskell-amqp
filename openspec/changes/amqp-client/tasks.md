@@ -94,7 +94,7 @@
 
 ## 10. Testing - Mock Server Core
 
-- [ ] 10.1 Create TCP listener that accepts connections
+- [x] 10.1 Create TCP listener that accepts connections
 - [ ] 10.2 Implement connection handler that spawns per-connection thread
 - [ ] 10.3 Implement protocol header exchange
 - [ ] 10.4 Implement OPEN/CLOSE handling in mock

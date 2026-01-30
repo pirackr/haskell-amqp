@@ -3,11 +3,11 @@
 ? /home/pirackr/Working/github.com/pirackr/haskell-amqp/.stack-work/dist/x86_64-linux-nix/ghc-9.8.4/build/haskell-amqp-test/autogen/cabal_macros.h
 : hash: 37d2e5cf270f3cd045ea202e262598b5b7b3b69b600693e92bc34836a59d5a26
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/haskell-amqp.cabal:
-  hash: 1386176beeaafdb32a08d1cd6f812d190d5797d32cf58ad589d6cc188e3f2e47
+  hash: 52556c7a63bf1cc2cf7221542822db26c40b4e5027722b89541c90c889ea7589
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/package.yaml:
-  hash: 1519c16946884ffdd6e06daa9cb50e777efce952c57f013d6797e9a4803342c4
+  hash: f9bfcfb10964b460022990a51378f2fbe8ef025ec36535910be171b618882fd1
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/test/Spec.hs:
-  hash: c37cf6925f28b63501e91e0ea1e667d3447eca5ba5263608bac3bae7b4c30e29
+  hash: f69f93404ed3a63d6c397a5f37d88c7cc59571891b7591db5981ea334f506236
 /nix/store/gf3wh0x0rzb1dkx0wx1jvmipydwfzzd5-glibc-2.40-66-dev/include/stdc-predef.h:
   hash: 8db4f65e62cade8ae4d9b77960ee6aee093255acc1b637e3fb37d79179733b15
 /nix/store/w6awqpzhn1pmfzql7ba5ar8pvs0yq5s2-ghc-9.8.4/lib/ghc-9.8.4/lib/x86_64-linux-ghc-9.8.4/rts-1.0.2/include/ghcversion.h:

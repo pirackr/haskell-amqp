@@ -3,13 +3,15 @@
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/.stack-work/dist/x86_64-linux-nix/ghc-9.8.4/build/autogen/cabal_macros.h:
   hash: ddbb4bff3c03921d98a494481785553ec3ea77bcc43d2a7fc39f1267781f7ddd
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/haskell-amqp.cabal:
-  hash: 1386176beeaafdb32a08d1cd6f812d190d5797d32cf58ad589d6cc188e3f2e47
+  hash: 52556c7a63bf1cc2cf7221542822db26c40b4e5027722b89541c90c889ea7589
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/package.yaml:
-  hash: 1519c16946884ffdd6e06daa9cb50e777efce952c57f013d6797e9a4803342c4
+  hash: f9bfcfb10964b460022990a51378f2fbe8ef025ec36535910be171b618882fd1
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Client.hs:
   hash: 2e7397efe322f419fc35e1f9a74015ba3f0351ccfa8b19adc7207fccfbba5f41
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Connection.hs:
   hash: 6cd5b33c69d17edb835830bbadf4f8087945637a80f64b4b61882a9ff36e7f6c
+/home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Messaging.hs:
+  hash: bd08c65794dd9071054497cc9103851bac8927e2047bb3af769500b777fe2b70
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Performatives.hs:
   hash: b824b4c98829bb7af18b26b7c687591d8dcbd16b3545a58dc4f8d703c43a2881
 /home/pirackr/Working/github.com/pirackr/haskell-amqp/src/Network/AMQP/Transport.hs:
