@@ -13,6 +13,10 @@ module Network.AMQP.Transport
   , ConnectionState(..)
   , SessionState(..)
   , LinkState(..)
+  , transitionConnection
+  , transitionSession
+  , transitionLink
+  , StateTransitionError(..)
   ) where
 
 import Network.AMQP.Performatives
@@ -154,3 +158,103 @@ data LinkState
   | LinkDetachSent   -- ^ DETACH sent, awaiting peer's DETACH
   | LinkDetachRecv   -- ^ DETACH received, need to send DETACH
   deriving (Eq, Show)
+
+-- | Events that can trigger state transitions
+data ConnectionEvent
+  = ConnEvtSendHeader      -- ^ Send protocol header
+  | ConnEvtRecvHeader      -- ^ Receive protocol header
+  | ConnEvtSendOpen        -- ^ Send OPEN performative
+  | ConnEvtRecvOpen        -- ^ Receive OPEN performative
+  | ConnEvtSendClose       -- ^ Send CLOSE performative
+  | ConnEvtRecvClose       -- ^ Receive CLOSE performative
+  deriving (Eq, Show)
+
+data SessionEvent
+  = SessEvtSendBegin       -- ^ Send BEGIN performative
+  | SessEvtRecvBegin       -- ^ Receive BEGIN performative
+  | SessEvtSendEnd         -- ^ Send END performative
+  | SessEvtRecvEnd         -- ^ Receive END performative
+  deriving (Eq, Show)
+
+data LinkEvent
+  = LinkEvtSendAttach      -- ^ Send ATTACH performative
+  | LinkEvtRecvAttach      -- ^ Receive ATTACH performative
+  | LinkEvtSendDetach      -- ^ Send DETACH performative
+  | LinkEvtRecvDetach      -- ^ Receive DETACH performative
+  deriving (Eq, Show)
+
+-- | Error type for invalid state transitions
+data StateTransitionError
+  = InvalidConnectionTransition ConnectionState ConnectionEvent
+  | InvalidSessionTransition SessionState SessionEvent
+  | InvalidLinkTransition LinkState LinkEvent
+  deriving (Eq, Show)
+
+-- -----------------------------------------------------------------------------
+-- State Transition Functions
+-- -----------------------------------------------------------------------------
+
+-- | Transition connection state based on an event
+-- Returns Left error if transition is invalid, Right newState if valid
+transitionConnection :: ConnectionState -> ConnectionEvent -> Either StateTransitionError ConnectionState
+transitionConnection ConnStart ConnEvtSendHeader = Right ConnHDRSent
+transitionConnection ConnStart ConnEvtRecvHeader = Right ConnHDRExch
+
+transitionConnection ConnHDRSent ConnEvtRecvHeader = Right ConnHDRExch
+
+transitionConnection ConnHDRExch ConnEvtSendOpen = Right ConnOpenSent
+transitionConnection ConnHDRExch ConnEvtRecvOpen = Right ConnOpenRecv
+
+transitionConnection ConnOpenSent ConnEvtRecvOpen = Right ConnOpened
+
+transitionConnection ConnOpenRecv ConnEvtSendOpen = Right ConnOpened
+
+transitionConnection ConnOpened ConnEvtSendClose = Right ConnCloseSent
+transitionConnection ConnOpened ConnEvtRecvClose = Right ConnCloseRecv
+
+transitionConnection ConnCloseSent ConnEvtRecvClose = Right ConnEnd
+
+transitionConnection ConnCloseRecv ConnEvtSendClose = Right ConnEnd
+
+-- Invalid transitions
+transitionConnection state event = Left (InvalidConnectionTransition state event)
+
+-- | Transition session state based on an event
+-- Returns Left error if transition is invalid, Right newState if valid
+transitionSession :: SessionState -> SessionEvent -> Either StateTransitionError SessionState
+transitionSession SessUnmapped SessEvtSendBegin = Right SessBeginSent
+transitionSession SessUnmapped SessEvtRecvBegin = Right SessBeginRecv
+
+transitionSession SessBeginSent SessEvtRecvBegin = Right SessMapped
+
+transitionSession SessBeginRecv SessEvtSendBegin = Right SessMapped
+
+transitionSession SessMapped SessEvtSendEnd = Right SessEndSent
+transitionSession SessMapped SessEvtRecvEnd = Right SessEndRecv
+
+transitionSession SessEndSent SessEvtRecvEnd = Right SessUnmapped
+
+transitionSession SessEndRecv SessEvtSendEnd = Right SessUnmapped
+
+-- Invalid transitions
+transitionSession state event = Left (InvalidSessionTransition state event)
+
+-- | Transition link state based on an event
+-- Returns Left error if transition is invalid, Right newState if valid
+transitionLink :: LinkState -> LinkEvent -> Either StateTransitionError LinkState
+transitionLink LinkDetached LinkEvtSendAttach = Right LinkAttachSent
+transitionLink LinkDetached LinkEvtRecvAttach = Right LinkAttachRecv
+
+transitionLink LinkAttachSent LinkEvtRecvAttach = Right LinkAttached
+
+transitionLink LinkAttachRecv LinkEvtSendAttach = Right LinkAttached
+
+transitionLink LinkAttached LinkEvtSendDetach = Right LinkDetachSent
+transitionLink LinkAttached LinkEvtRecvDetach = Right LinkDetachRecv
+
+transitionLink LinkDetachSent LinkEvtRecvDetach = Right LinkDetached
+
+transitionLink LinkDetachRecv LinkEvtSendDetach = Right LinkDetached
+
+-- Invalid transitions
+transitionLink state event = Left (InvalidLinkTransition state event)

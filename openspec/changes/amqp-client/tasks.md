@@ -67,9 +67,9 @@
 - [x] 7.1 Define ConnectionState ADT (Start, HDRSent, HDRExch, OpenSent, OpenRecv, Opened, CloseSent, CloseRecv, End)
 - [x] 7.2 Define SessionState ADT (Unmapped, BeginSent, BeginRecv, Mapped, EndSent, EndRecv)
 - [x] 7.3 Define LinkState ADT (Detached, AttachSent, AttachRecv, Attached, DetachSent, DetachRecv)
-- [ ] 7.4 Implement connection state transition function
-- [ ] 7.5 Implement session state transition function
-- [ ] 7.6 Implement link state transition function
+- [x] 7.4 Implement connection state transition function
+- [x] 7.5 Implement session state transition function
+- [x] 7.6 Implement link state transition function
 - [ ] 7.7 Write tests for valid state transitions
 - [ ] 7.8 Write tests for invalid state transition rejection
 
