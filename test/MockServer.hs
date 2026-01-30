@@ -69,6 +69,12 @@ data MockServer = MockServer
   , mockServerState :: TVar MockState
   }
 
+-- | Stored message in a queue
+data StoredMessage = StoredMessage
+  { storedPayload :: ByteString
+  , storedDeliveryTag :: Maybe ByteString
+  } deriving (Eq, Show)
+
 -- | Overall mock server state
 data MockState = MockState
   { mockConnections :: Map ThreadId MockConnectionState
@@ -78,6 +84,7 @@ data MockState = MockState
 data MockConnectionState = MockConnectionState
   { mockConnState :: ConnectionState
   , mockConnSessions :: Map Word16 MockSessionState
+  , mockQueues :: Map Text [StoredMessage]
   }
 
 -- | Per-session state
@@ -92,6 +99,8 @@ data MockLinkState = MockLinkState
   , mockLinkName :: String
   , mockLinkRole :: Role
   , mockLinkTransfers :: [(Word32, ByteString)]  -- (delivery-id, payload)
+  , mockLinkTargetAddress :: Maybe Text  -- Target address for sender links
+  , mockLinkSourceAddress :: Maybe Text  -- Source address for receiver links
   }
 
 -- | Start a mock AMQP server on the specified port
@@ -140,6 +149,7 @@ acceptLoop sock stateVar = forever $ do
     initialConnectionState = MockConnectionState
       { mockConnState = ConnStart
       , mockConnSessions = Map.empty
+      , mockQueues = Map.empty
       }
 
 -- | Handle a single client connection
@@ -338,8 +348,16 @@ handlePerformative handle stateVar channel perf = case perf of
 
   -- ATTACH handling
   PerformativeAttach clientAttach -> do
+    -- Extract addresses from source/target
+    let targetAddr = case attachTarget clientAttach of
+          Just (Target (Terminus { terminusAddress = addr })) -> addr
+          _ -> Nothing
+    let sourceAddr = case attachSource clientAttach of
+          Just (Source (Terminus { terminusAddress = addr })) -> addr
+          _ -> Nothing
+
     -- Create link state if it doesn't exist
-    createLinkIfNeeded stateVar channel (attachHandle clientAttach) (attachName clientAttach) (attachRole clientAttach)
+    createLinkIfNeeded stateVar channel (attachHandle clientAttach) (attachName clientAttach) (attachRole clientAttach) targetAddr sourceAddr
     updateLinkState stateVar channel (attachHandle clientAttach) LinkEvtRecvAttach
 
     -- Send ATTACH response (mirror the client's attach but with opposite role)
@@ -427,8 +445,8 @@ createSessionIfNeeded stateVar channel = do
             in s { mockConnections = Map.insert tid updatedConnState (mockConnections s) }
 
 -- | Create link state if it doesn't exist
-createLinkIfNeeded :: TVar MockState -> Word16 -> Word32 -> Text -> Role -> IO ()
-createLinkIfNeeded stateVar channel handle name role = do
+createLinkIfNeeded :: TVar MockState -> Word16 -> Word32 -> Text -> Role -> Maybe Text -> Maybe Text -> IO ()
+createLinkIfNeeded stateVar channel handle name role targetAddr sourceAddr = do
   tid <- myThreadId
   atomically $ modifyTVar' stateVar $ \s ->
     case Map.lookup tid (mockConnections s) of
@@ -445,6 +463,8 @@ createLinkIfNeeded stateVar channel handle name role = do
                       , mockLinkName = T.unpack name
                       , mockLinkRole = role
                       , mockLinkTransfers = []
+                      , mockLinkTargetAddress = targetAddr
+                      , mockLinkSourceAddress = sourceAddr
                       }
                     updatedLinks = Map.insert handle newLinkState (mockSessLinks sessState)
                     updatedSessState = sessState { mockSessLinks = updatedLinks }
@@ -452,7 +472,7 @@ createLinkIfNeeded stateVar channel handle name role = do
                     updatedConnState = connState { mockConnSessions = updatedSessions }
                 in s { mockConnections = Map.insert tid updatedConnState (mockConnections s) }
 
--- | Store a received transfer in link state
+-- | Store a received transfer in link state and message queue
 storeTransfer :: TVar MockState -> Word16 -> Word32 -> Maybe Word32 -> ByteString -> IO ()
 storeTransfer stateVar channel linkHandle mDeliveryId payload = do
   tid <- myThreadId
@@ -472,5 +492,17 @@ storeTransfer stateVar channel linkHandle mDeliveryId payload = do
                     updatedLinks = Map.insert linkHandle updatedLinkState (mockSessLinks sessState)
                     updatedSessState = sessState { mockSessLinks = updatedLinks }
                     updatedSessions = Map.insert channel updatedSessState (mockConnSessions connState)
-                    updatedConnState = connState { mockConnSessions = updatedSessions }
+
+                    -- Store message in queue if target address exists
+                    updatedConnState = case mockLinkTargetAddress linkState of
+                      Just addr ->
+                        let storedMsg = StoredMessage
+                              { storedPayload = payload
+                              , storedDeliveryTag = Nothing
+                              }
+                            currentQueue = Map.findWithDefault [] addr (mockQueues connState)
+                            updatedQueue = currentQueue ++ [storedMsg]
+                            updatedQueues = Map.insert addr updatedQueue (mockQueues connState)
+                        in connState { mockConnSessions = updatedSessions, mockQueues = updatedQueues }
+                      Nothing -> connState { mockConnSessions = updatedSessions }
                 in s { mockConnections = Map.insert tid updatedConnState (mockConnections s) }
