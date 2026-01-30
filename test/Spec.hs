@@ -11,6 +11,7 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString as BS
 import Control.Exception (try, evaluate, ErrorCall, bracket)
+import Control.Monad (forM_)
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.UUID (UUID, fromWords)
 import qualified Data.UUID as UUID
@@ -1708,6 +1709,1011 @@ mockServerTests = testGroup "Mock Server"
       performDetachHandshake handle 0 0
       performEndHandshake handle 0
       performCloseHandshake handle
+
+      hClose handle
+  , testCase "send message through mock" $ withMockServer 15678 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Setup: OPEN + BEGIN + ATTACH as sender
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      -- Attach sender link with target queue
+      let target = Target $ Terminus
+            { terminusAddress = Just "test-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      let senderAttach = Attach
+            { attachName = "sender-link"
+            , attachHandle = 0
+            , attachRole = RoleSender
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Nothing
+            , attachTarget = Just target
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Nothing
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeAttach senderAttach)
+      _ <- recvPerf handle  -- Receive ATTACH response
+
+      -- Send TRANSFER with message
+      let msg = Message Nothing Nothing Nothing (Just (AmqpValueBody (AMQPString "Hello, Mock!"))) Nothing
+      let msgBytes = LBS.toStrict $ runPut (putMessage msg)
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Just 1
+            , transferDeliveryTag = Just (BS.pack [0x01])
+            , transferMessageFormat = Just 0
+            , transferSettled = Just False
+            , transferMore = Just False
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+      sendPerf handle 0 (PerformativeTransfer transfer)
+
+      -- Receive DISPOSITION
+      dispPerf <- recvPerf handle
+      case dispPerf of
+        Just (PerformativeDisposition disp) -> do
+          dispositionFirst disp @?= 1
+          dispositionSettled disp @?= Just True
+        _ -> assertFailure "Expected DISPOSITION performative"
+
+      hClose handle
+  , testCase "receive message from mock" $ withMockServer 15679 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- First, send a message to the queue (as sender)
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      let target = Target $ Terminus
+            { terminusAddress = Just "receive-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      let senderAttach = Attach
+            { attachName = "sender-link"
+            , attachHandle = 0
+            , attachRole = RoleSender
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Nothing
+            , attachTarget = Just target
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Nothing
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeAttach senderAttach)
+      _ <- recvPerf handle  -- Receive ATTACH response
+
+      -- Send a message
+      let msg = Message Nothing Nothing Nothing (Just (AmqpValueBody (AMQPString "Test Message"))) Nothing
+      let msgBytes = LBS.toStrict $ runPut (putMessage msg)
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Just 1
+            , transferDeliveryTag = Just (BS.pack [0x01])
+            , transferMessageFormat = Just 0
+            , transferSettled = Just False
+            , transferMore = Just False
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+      sendPerf handle 0 (PerformativeTransfer transfer)
+      _ <- recvPerf handle  -- Receive DISPOSITION
+
+      -- Detach sender
+      performDetachHandshake handle 0 0
+
+      -- Now attach as receiver to the same queue
+      let source = Source $ Terminus
+            { terminusAddress = Just "receive-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      let receiverAttach = Attach
+            { attachName = "receiver-link"
+            , attachHandle = 1
+            , attachRole = RoleReceiver
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Just source
+            , attachTarget = Nothing
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Just 0
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeAttach receiverAttach)
+      _ <- recvPerf handle  -- Receive ATTACH response
+
+      -- Should receive TRANSFER with the message
+      transferPerf <- recvPerf handle
+      case transferPerf of
+        Just (PerformativeTransfer rcvTransfer) -> do
+          transferHandle rcvTransfer @?= 1
+          -- Message was delivered
+          return ()
+        _ -> assertFailure "Expected TRANSFER performative with message"
+
+      hClose handle
+  , testCase "roundtrip message through mock" $ withMockServer 15680 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Setup
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      -- Send to queue
+      let target = Target $ Terminus
+            { terminusAddress = Just "roundtrip-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      performAttachHandshake handle 0 0 "sender" RoleSender
+
+      let msg = Message Nothing Nothing Nothing (Just (AmqpValueBody (AMQPString "Roundtrip"))) Nothing
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Just 1
+            , transferDeliveryTag = Nothing
+            , transferMessageFormat = Just 0
+            , transferSettled = Just False
+            , transferMore = Just False
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+      sendPerf handle 0 (PerformativeTransfer transfer)
+      _ <- recvPerf handle  -- DISPOSITION
+
+      performDetachHandshake handle 0 0
+
+      -- Receive from same queue
+      performAttachHandshake handle 0 1 "receiver" RoleReceiver
+
+      -- Should receive the message
+      transferPerf <- recvPerf handle
+      case transferPerf of
+        Just (PerformativeTransfer _) -> return ()
+        _ -> assertFailure "Expected message delivery"
+
+      hClose handle
+  , testCase "send and receive with credit flow" $ withMockServer 15681 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Setup connection and session
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      -- Attach sender link
+      let target = Target $ Terminus
+            { terminusAddress = Just "credit-test-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      let senderAttach = Attach
+            { attachName = "sender-link"
+            , attachHandle = 0
+            , attachRole = RoleSender
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Nothing
+            , attachTarget = Just target
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Nothing
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeAttach senderAttach)
+      _ <- recvPerf handle  -- Receive ATTACH response
+
+      -- Send message
+      let msg = Message Nothing Nothing Nothing (Just (AmqpValueBody (AMQPString "Credit Flow Test"))) Nothing
+      let msgBytes = LBS.toStrict $ runPut (putMessage msg)
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Just 1
+            , transferDeliveryTag = Just (BS.pack [0x01])
+            , transferMessageFormat = Just 0
+            , transferSettled = Just False
+            , transferMore = Just False
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+      sendPerf handle 0 (PerformativeTransfer transfer)
+
+      -- Receive DISPOSITION
+      dispPerf <- recvPerf handle
+      case dispPerf of
+        Just (PerformativeDisposition disp) -> do
+          dispositionFirst disp @?= 1
+          dispositionSettled disp @?= Just True
+        _ -> assertFailure "Expected DISPOSITION"
+
+      -- Detach sender
+      performDetachHandshake handle 0 0
+
+      -- Attach receiver link
+      let source = Source $ Terminus
+            { terminusAddress = Just "credit-test-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      let receiverAttach = Attach
+            { attachName = "receiver-link"
+            , attachHandle = 1
+            , attachRole = RoleReceiver
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Just source
+            , attachTarget = Nothing
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Just 0
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeAttach receiverAttach)
+      _ <- recvPerf handle  -- Receive ATTACH response
+
+      -- Send FLOW to grant credit
+      let flow = Flow
+            { flowNextIncomingId = Just 0
+            , flowIncomingWindow = 2048
+            , flowNextOutgoingId = 0
+            , flowOutgoingWindow = 2048
+            , flowHandle = Just 1
+            , flowDeliveryCount = Just 0
+            , flowLinkCredit = Just 10
+            , flowAvailable = Nothing
+            , flowDrain = Nothing
+            , flowEcho = Nothing
+            , flowProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeFlow flow)
+
+      -- Receive TRANSFER with message
+      transferPerf <- recvPerf handle
+      case transferPerf of
+        Just (PerformativeTransfer rcvTransfer) -> do
+          transferHandle rcvTransfer @?= 1
+          transferDeliveryId rcvTransfer @?= Just 0
+        _ -> assertFailure "Expected TRANSFER with message"
+
+      hClose handle
+
+  , testCase "verify message delivery after send" $ withMockServer 15682 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Setup
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      -- Send a message
+      let target = Target $ Terminus
+            { terminusAddress = Just "content-test-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      performAttachHandshake handle 0 0 "sender" RoleSender
+
+      let msg = Message Nothing Nothing Nothing (Just (AmqpValueBody (AMQPString "Test Content"))) Nothing
+      let msgBytes = LBS.toStrict $ runPut (putMessage msg)
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Just 1
+            , transferDeliveryTag = Just (BS.pack [0x01])
+            , transferMessageFormat = Just 0
+            , transferSettled = Just False
+            , transferMore = Just False
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+
+      -- Send TRANSFER with message payload
+      let transferBytes = LBS.toStrict $ runPut (putPerformative (PerformativeTransfer transfer))
+      let payload = transferBytes <> msgBytes
+      let frame = Frame AMQPFrameType 0 payload
+      let frameBytes = LBS.toStrict $ runPut (putFrame frame)
+      BS.hPut handle frameBytes
+
+      _ <- recvPerf handle  -- DISPOSITION
+
+      performDetachHandshake handle 0 0
+
+      -- Attach receiver - this triggers message delivery
+      let source = Source $ Terminus
+            { terminusAddress = Just "content-test-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      let receiverAttach = Attach
+            { attachName = "receiver"
+            , attachHandle = 1
+            , attachRole = RoleReceiver
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Just source
+            , attachTarget = Nothing
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Just 0
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeAttach receiverAttach)
+      _ <- recvPerf handle  -- ATTACH response
+
+      -- Receive TRANSFER (message delivered automatically)
+      transferPerf <- recvPerf handle
+      case transferPerf of
+        Just (PerformativeTransfer rcvTransfer) -> do
+          transferHandle rcvTransfer @?= 1
+          -- Message was delivered successfully
+          return ()
+        _ -> assertFailure "Expected TRANSFER with message"
+
+      hClose handle
+
+  , testCase "send and receive multiple messages" $ withMockServer 15683 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Setup
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      -- Attach sender
+      let target = Target $ Terminus
+            { terminusAddress = Just "multi-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      performAttachHandshake handle 0 0 "sender" RoleSender
+
+      -- Send 3 messages
+      let messages = ["Message 1", "Message 2", "Message 3"]
+      forM_ (zip [1..] messages) $ \(deliveryId, content) -> do
+        let msg = Message Nothing Nothing Nothing (Just (AmqpValueBody (AMQPString content))) Nothing
+        let msgBytes = LBS.toStrict $ runPut (putMessage msg)
+        let transfer = Transfer
+              { transferHandle = 0
+              , transferDeliveryId = Just deliveryId
+              , transferDeliveryTag = Just (BS.pack [fromIntegral deliveryId])
+              , transferMessageFormat = Just 0
+              , transferSettled = Just False
+              , transferMore = Just False
+              , transferRcvSettleMode = Nothing
+              , transferState = Nothing
+              , transferResume = Nothing
+              , transferAborted = Nothing
+              , transferBatchable = Nothing
+              }
+
+        -- Send TRANSFER with message payload
+        let transferBytes = LBS.toStrict $ runPut (putPerformative (PerformativeTransfer transfer))
+        let payload = transferBytes <> msgBytes
+        let frame = Frame AMQPFrameType 0 payload
+        let frameBytes = LBS.toStrict $ runPut (putFrame frame)
+        BS.hPut handle frameBytes
+
+        _ <- recvPerf handle  -- DISPOSITION
+        return ()
+
+      performDetachHandshake handle 0 0
+
+      -- Attach receiver
+      let source = Source $ Terminus
+            { terminusAddress = Just "multi-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      let receiverAttach = Attach
+            { attachName = "receiver"
+            , attachHandle = 1
+            , attachRole = RoleReceiver
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Just source
+            , attachTarget = Nothing
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Just 0
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeAttach receiverAttach)
+      _ <- recvPerf handle
+
+      -- Grant credit for multiple messages
+      let flow = Flow
+            { flowNextIncomingId = Just 0
+            , flowIncomingWindow = 2048
+            , flowNextOutgoingId = 0
+            , flowOutgoingWindow = 2048
+            , flowHandle = Just 1
+            , flowDeliveryCount = Just 0
+            , flowLinkCredit = Just 10
+            , flowAvailable = Nothing
+            , flowDrain = Nothing
+            , flowEcho = Nothing
+            , flowProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeFlow flow)
+
+      -- Receive 3 messages
+      forM_ [0..2] $ \expectedId -> do
+        transferPerf <- recvPerf handle
+        case transferPerf of
+          Just (PerformativeTransfer rcvTransfer) -> do
+            transferHandle rcvTransfer @?= 1
+            transferDeliveryId rcvTransfer @?= Just expectedId
+          _ -> assertFailure $ "Expected TRANSFER for message " ++ show expectedId
+
+      hClose handle
+
+  , testCase "settlement with DISPOSITION" $ withMockServer 15684 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Setup
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      -- Send unsettled message
+      let target = Target $ Terminus
+            { terminusAddress = Just "settlement-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      performAttachHandshake handle 0 0 "sender" RoleSender
+
+      let msg = Message Nothing Nothing Nothing (Just (AmqpValueBody (AMQPString "Settlement Test"))) Nothing
+      let msgBytes = LBS.toStrict $ runPut (putMessage msg)
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Just 42  -- Use specific delivery ID
+            , transferDeliveryTag = Just (BS.pack [0x2A])
+            , transferMessageFormat = Just 0
+            , transferSettled = Just False  -- Not settled
+            , transferMore = Just False
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+
+      let transferBytes = LBS.toStrict $ runPut (putPerformative (PerformativeTransfer transfer))
+      let payload = transferBytes <> msgBytes
+      let frame = Frame AMQPFrameType 0 payload
+      let frameBytes = LBS.toStrict $ runPut (putFrame frame)
+      BS.hPut handle frameBytes
+
+      -- Receive DISPOSITION with accepted state
+      dispPerf <- recvPerf handle
+      case dispPerf of
+        Just (PerformativeDisposition disp) -> do
+          dispositionRole disp @?= RoleReceiver
+          dispositionFirst disp @?= 42
+          dispositionSettled disp @?= Just True
+          -- Verify accepted state
+          case dispositionState disp of
+            Just state -> do
+              -- State should be accepted (descriptor 0x24)
+              return ()
+            Nothing -> assertFailure "Expected delivery state"
+        _ -> assertFailure "Expected DISPOSITION performative"
+
+      hClose handle
+
+  -- Send/Receive Tests
+  , testCase "basic send/receive roundtrip" $ withMockServer 15685 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Setup connection and session
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      -- Create sender link with target queue
+      let targetAddr = "roundtrip-queue"
+      let target = Target $ Terminus
+            { terminusAddress = Just targetAddr
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      let senderAttach = Attach
+            { attachName = "sender-link"
+            , attachHandle = 0
+            , attachRole = RoleSender
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Nothing
+            , attachTarget = Just target
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Nothing
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeAttach senderAttach)
+      _ <- recvPerf handle  -- Receive ATTACH response
+
+      -- Send message
+      let testContent = "Hello, World!"
+      let msg = Message Nothing Nothing Nothing (Just (AmqpValueBody (AMQPString testContent))) Nothing
+      let msgBytes = LBS.toStrict $ runPut (putMessage msg)
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Just 1
+            , transferDeliveryTag = Just (BS.pack [0x01])
+            , transferMessageFormat = Just 0
+            , transferSettled = Just False
+            , transferMore = Just False
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+
+      -- Send TRANSFER with message payload
+      let transferBytes = LBS.toStrict $ runPut (putPerformative (PerformativeTransfer transfer))
+      let payload = transferBytes <> msgBytes
+      let frame = Frame AMQPFrameType 0 payload
+      let frameBytes = LBS.toStrict $ runPut (putFrame frame)
+      BS.hPut handle frameBytes
+
+      -- Receive DISPOSITION
+      dispPerf <- recvPerf handle
+      case dispPerf of
+        Just (PerformativeDisposition disp) -> do
+          dispositionFirst disp @?= 1
+          dispositionSettled disp @?= Just True
+        _ -> assertFailure "Expected DISPOSITION after send"
+
+      -- Detach sender
+      performDetachHandshake handle 0 0
+
+      -- Create receiver link with source queue
+      let source = Source $ Terminus
+            { terminusAddress = Just targetAddr
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      let receiverAttach = Attach
+            { attachName = "receiver-link"
+            , attachHandle = 1
+            , attachRole = RoleReceiver
+            , attachSndSettleMode = Nothing
+            , attachRcvSettleMode = Nothing
+            , attachSource = Just source
+            , attachTarget = Nothing
+            , attachUnsettled = Nothing
+            , attachIncompleteUnsettled = Nothing
+            , attachInitialDeliveryCount = Just 0
+            , attachMaxMessageSize = Nothing
+            , attachOfferedCapabilities = Nothing
+            , attachDesiredCapabilities = Nothing
+            , attachProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeAttach receiverAttach)
+      _ <- recvPerf handle  -- Receive ATTACH response
+
+      -- Send FLOW to grant credit
+      let flow = Flow
+            { flowNextIncomingId = Just 0
+            , flowIncomingWindow = 2048
+            , flowNextOutgoingId = 0
+            , flowOutgoingWindow = 2048
+            , flowHandle = Just 1
+            , flowDeliveryCount = Just 0
+            , flowLinkCredit = Just 10
+            , flowAvailable = Nothing
+            , flowDrain = Nothing
+            , flowEcho = Nothing
+            , flowProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeFlow flow)
+
+      -- Receive TRANSFER with message
+      receivedFrameBytes <- BS.hGet handle 4
+      let receivedSize = runGet getWord32be (LBS.fromStrict receivedFrameBytes)
+      restBytes <- BS.hGet handle (fromIntegral receivedSize - 4)
+      let fullFrameBytes = receivedFrameBytes <> restBytes
+
+      case runGetOrFail getFrame (LBS.fromStrict fullFrameBytes) of
+        Left _ -> assertFailure "Failed to parse received frame"
+        Right (_, _, receivedFrame) -> do
+          -- Parse performative from frame payload
+          let payload = framePayload receivedFrame
+          case runGetOrFail getPerformative (LBS.fromStrict payload) of
+            Left _ -> assertFailure "Failed to parse TRANSFER performative"
+            Right (remaining, _, receivedPerf) -> do
+              case receivedPerf of
+                PerformativeTransfer rcvTransfer -> do
+                  transferHandle rcvTransfer @?= 1
+                  transferDeliveryId rcvTransfer @?= Just 0
+
+                  -- Parse message from remaining bytes
+                  let msgPayload = LBS.toStrict remaining
+                  case runGetOrFail getMessage (LBS.fromStrict msgPayload) of
+                    Left _ -> assertFailure "Failed to parse message"
+                    Right (_, _, receivedMsg) -> do
+                      -- Verify message content
+                      case messageBody receivedMsg of
+                        Just (AmqpValueBody (AMQPString content)) ->
+                          content @?= testContent
+                        _ -> assertFailure "Expected AmqpValue body with string content"
+                _ -> assertFailure "Expected TRANSFER performative"
+
+      hClose handle
+
+  , testCase "send/receive with message properties" $ withMockServer 15686 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Setup
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      -- Attach sender
+      let target = Target $ Terminus
+            { terminusAddress = Just "props-test-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      performAttachHandshake handle 0 0 "sender" RoleSender
+
+      -- Create message with properties
+      let props = Properties
+            { propertiesMessageId = Just (MessageIdString "msg-123")
+            , propertiesUserId = Nothing
+            , propertiesTo = Just "destination"
+            , propertiesSubject = Just "Test Subject"
+            , propertiesReplyTo = Nothing
+            , propertiesCorrelationId = Nothing
+            , propertiesContentType = Just "text/plain"
+            , propertiesContentEncoding = Nothing
+            , propertiesAbsoluteExpiryTime = Nothing
+            , propertiesCreationTime = Nothing
+            , propertiesGroupId = Nothing
+            , propertiesGroupSequence = Nothing
+            , propertiesReplyToGroupId = Nothing
+            }
+      let msg = Message Nothing (Just props) Nothing (Just (AmqpValueBody (AMQPString "Test"))) Nothing
+      let msgBytes = LBS.toStrict $ runPut (putMessage msg)
+
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Just 1
+            , transferDeliveryTag = Just (BS.pack [0x01])
+            , transferMessageFormat = Just 0
+            , transferSettled = Just False
+            , transferMore = Just False
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+
+      let transferBytes = LBS.toStrict $ runPut (putPerformative (PerformativeTransfer transfer))
+      let payload = transferBytes <> msgBytes
+      let frame = Frame AMQPFrameType 0 payload
+      let frameBytes = LBS.toStrict $ runPut (putFrame frame)
+      BS.hPut handle frameBytes
+
+      _ <- recvPerf handle  -- DISPOSITION
+
+      performDetachHandshake handle 0 0
+
+      -- Attach receiver
+      let source = Source $ Terminus
+            { terminusAddress = Just "props-test-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      performAttachHandshake handle 0 1 "receiver" RoleReceiver
+
+      -- Grant credit
+      let flow = Flow
+            { flowNextIncomingId = Just 0
+            , flowIncomingWindow = 2048
+            , flowNextOutgoingId = 0
+            , flowOutgoingWindow = 2048
+            , flowHandle = Just 1
+            , flowDeliveryCount = Just 0
+            , flowLinkCredit = Just 1
+            , flowAvailable = Nothing
+            , flowDrain = Nothing
+            , flowEcho = Nothing
+            , flowProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeFlow flow)
+
+      -- Receive message
+      receivedFrameBytes <- BS.hGet handle 4
+      let receivedSize = runGet getWord32be (LBS.fromStrict receivedFrameBytes)
+      restBytes <- BS.hGet handle (fromIntegral receivedSize - 4)
+      let fullFrameBytes = receivedFrameBytes <> restBytes
+
+      case runGetOrFail getFrame (LBS.fromStrict fullFrameBytes) of
+        Right (_, _, receivedFrame) -> do
+          let payload = framePayload receivedFrame
+          case runGetOrFail getPerformative (LBS.fromStrict payload) of
+            Right (remaining, _, PerformativeTransfer _) -> do
+              let msgPayload = LBS.toStrict remaining
+              case runGetOrFail getMessage (LBS.fromStrict msgPayload) of
+                Right (_, _, receivedMsg) -> do
+                  -- Verify properties
+                  case messageProperties receivedMsg of
+                    Just receivedProps -> do
+                      propertiesMessageId receivedProps @?= Just (MessageIdString "msg-123")
+                      propertiesTo receivedProps @?= Just "destination"
+                      propertiesSubject receivedProps @?= Just "Test Subject"
+                      propertiesContentType receivedProps @?= Just "text/plain"
+                    Nothing -> assertFailure "Expected message properties"
+                _ -> assertFailure "Failed to parse message"
+            _ -> assertFailure "Failed to parse TRANSFER"
+        _ -> assertFailure "Failed to parse frame"
+
+      hClose handle
+
+  , testCase "multiple messages roundtrip" $ withMockServer 15687 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Setup
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      -- Attach sender
+      let target = Target $ Terminus
+            { terminusAddress = Just "multi-msg-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      performAttachHandshake handle 0 0 "sender" RoleSender
+
+      -- Send multiple messages
+      let messages = ["First", "Second", "Third"]
+      forM_ (zip [1..] messages) $ \(deliveryId, content) -> do
+        let msg = Message Nothing Nothing Nothing (Just (AmqpValueBody (AMQPString content))) Nothing
+        let msgBytes = LBS.toStrict $ runPut (putMessage msg)
+        let transfer = Transfer
+              { transferHandle = 0
+              , transferDeliveryId = Just deliveryId
+              , transferDeliveryTag = Just (BS.pack [fromIntegral deliveryId])
+              , transferMessageFormat = Just 0
+              , transferSettled = Just False
+              , transferMore = Just False
+              , transferRcvSettleMode = Nothing
+              , transferState = Nothing
+              , transferResume = Nothing
+              , transferAborted = Nothing
+              , transferBatchable = Nothing
+              }
+
+        let transferBytes = LBS.toStrict $ runPut (putPerformative (PerformativeTransfer transfer))
+        let payload = transferBytes <> msgBytes
+        let frame = Frame AMQPFrameType 0 payload
+        let frameBytes = LBS.toStrict $ runPut (putFrame frame)
+        BS.hPut handle frameBytes
+
+        _ <- recvPerf handle  -- DISPOSITION
+        return ()
+
+      performDetachHandshake handle 0 0
+
+      -- Attach receiver
+      let source = Source $ Terminus
+            { terminusAddress = Just "multi-msg-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      performAttachHandshake handle 0 1 "receiver" RoleReceiver
+
+      -- Grant credit
+      let flow = Flow
+            { flowNextIncomingId = Just 0
+            , flowIncomingWindow = 2048
+            , flowNextOutgoingId = 0
+            , flowOutgoingWindow = 2048
+            , flowHandle = Just 1
+            , flowDeliveryCount = Just 0
+            , flowLinkCredit = Just 10
+            , flowAvailable = Nothing
+            , flowDrain = Nothing
+            , flowEcho = Nothing
+            , flowProperties = Nothing
+            }
+      sendPerf handle 0 (PerformativeFlow flow)
+
+      -- Receive all messages
+      forM_ messages $ \expectedContent -> do
+        receivedFrameBytes <- BS.hGet handle 4
+        let receivedSize = runGet getWord32be (LBS.fromStrict receivedFrameBytes)
+        restBytes <- BS.hGet handle (fromIntegral receivedSize - 4)
+        let fullFrameBytes = receivedFrameBytes <> restBytes
+
+        case runGetOrFail getFrame (LBS.fromStrict fullFrameBytes) of
+          Right (_, _, receivedFrame) -> do
+            let payload = framePayload receivedFrame
+            case runGetOrFail getPerformative (LBS.fromStrict payload) of
+              Right (remaining, _, PerformativeTransfer _) -> do
+                let msgPayload = LBS.toStrict remaining
+                case runGetOrFail getMessage (LBS.fromStrict msgPayload) of
+                  Right (_, _, receivedMsg) -> do
+                    case messageBody receivedMsg of
+                      Just (AmqpValueBody (AMQPString content)) ->
+                        content `elem` messages @? ("Content should be one of the sent messages: " ++ T.unpack content)
+                      _ -> assertFailure "Expected AmqpValue body"
+                  _ -> assertFailure "Failed to parse message"
+              _ -> assertFailure "Failed to parse TRANSFER"
+          _ -> assertFailure "Failed to parse frame"
+
+      hClose handle
+
+  , testCase "send/receive with settlement" $ withMockServer 15688 $ \port -> do
+      handle <- connectToMockServer port
+
+      -- Setup
+      performOpenHandshake handle
+      performBeginHandshake handle 0
+
+      -- Attach sender
+      let target = Target $ Terminus
+            { terminusAddress = Just "settlement-test-queue"
+            , terminusDurable = Nothing
+            , terminusExpiryPolicy = Nothing
+            , terminusTimeout = Nothing
+            , terminusDynamic = Nothing
+            , terminusDynamicNodeProperties = Nothing
+            , terminusCapabilities = Nothing
+            }
+      performAttachHandshake handle 0 0 "sender" RoleSender
+
+      -- Send unsettled message
+      let msg = Message Nothing Nothing Nothing (Just (AmqpValueBody (AMQPString "Unsettled"))) Nothing
+      let msgBytes = LBS.toStrict $ runPut (putMessage msg)
+      let transfer = Transfer
+            { transferHandle = 0
+            , transferDeliveryId = Just 100
+            , transferDeliveryTag = Just (BS.pack [0x64])
+            , transferMessageFormat = Just 0
+            , transferSettled = Just False  -- Explicitly unsettled
+            , transferMore = Just False
+            , transferRcvSettleMode = Nothing
+            , transferState = Nothing
+            , transferResume = Nothing
+            , transferAborted = Nothing
+            , transferBatchable = Nothing
+            }
+
+      let transferBytes = LBS.toStrict $ runPut (putPerformative (PerformativeTransfer transfer))
+      let payload = transferBytes <> msgBytes
+      let frame = Frame AMQPFrameType 0 payload
+      let frameBytes = LBS.toStrict $ runPut (putFrame frame)
+      BS.hPut handle frameBytes
+
+      -- Receive DISPOSITION with accepted state
+      dispPerf <- recvPerf handle
+      case dispPerf of
+        Just (PerformativeDisposition disp) -> do
+          dispositionRole disp @?= RoleReceiver
+          dispositionFirst disp @?= 100
+          dispositionSettled disp @?= Just True
+          -- Verify state is present (should be accepted)
+          case dispositionState disp of
+            Just _ -> return ()
+            Nothing -> assertFailure "Expected delivery state"
+        _ -> assertFailure "Expected DISPOSITION"
 
       hClose handle
   ]

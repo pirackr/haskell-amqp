@@ -287,11 +287,14 @@ handleFrame handle stateVar frame = do
   -- Parse performative from frame payload
   case runGetOrFail getPerformative (LBS.fromStrict (framePayload frame)) of
     Left _ -> return ()  -- Invalid performative
-    Right (_, _, perf) -> handlePerformative handle stateVar (frameChannel frame) perf
+    Right (remaining, _, perf) -> do
+      -- Extract message payload (data after performative) for TRANSFER
+      let msgPayload = LBS.toStrict remaining
+      handlePerformative handle stateVar (frameChannel frame) perf msgPayload
 
 -- | Handle a performative
-handlePerformative :: Handle -> TVar MockState -> Word16 -> Performative -> IO ()
-handlePerformative handle stateVar channel perf = case perf of
+handlePerformative :: Handle -> TVar MockState -> Word16 -> Performative -> ByteString -> IO ()
+handlePerformative handle stateVar channel perf msgPayload = case perf of
   -- OPEN handling
   PerformativeOpen clientOpen -> do
     updateConnectionState stateVar ConnEvtRecvOpen
@@ -406,8 +409,8 @@ handlePerformative handle stateVar channel perf = case perf of
 
   -- TRANSFER handling
   PerformativeTransfer transfer -> do
-    -- Store the transfer in link state
-    storeTransfer stateVar channel (transferHandle transfer) (transferDeliveryId transfer) BS.empty
+    -- Store the transfer in link state with actual message payload
+    storeTransfer stateVar channel (transferHandle transfer) (transferDeliveryId transfer) msgPayload
 
     -- Send DISPOSITION response if delivery-id is present
     case transferDeliveryId transfer of
