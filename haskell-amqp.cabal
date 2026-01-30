@@ -15,11 +15,11 @@ build-type:     Simple
 
 library
   exposed-modules:
-      Network.AMQP.Client
-      Network.AMQP.Connection
-      Network.AMQP.Performatives
-      Network.AMQP.Transport
       Network.AMQP.Types
+      Network.AMQP.Transport
+      Network.AMQP.Performatives
+      Network.AMQP.Connection
+      Network.AMQP.Client
   other-modules:
       Paths_haskell_amqp
   hs-source-dirs:

@@ -123,6 +123,7 @@ tests = testGroup "AMQP Tests"
   , encodingFormatTests
   , decodingFormatTests
   , performativeTests
+  , stateMachineTests
   ]
 
 -- -----------------------------------------------------------------------------
@@ -913,4 +914,212 @@ closePerformativeTests = testGroup "CLOSE Performative"
       in case decoded of
            AMQPDescribed (AMQPULong 0x00000018) _ -> return ()
            _ -> assertFailure "Expected descriptor 0x18"
+  ]
+
+-- -----------------------------------------------------------------------------
+-- State Machine Tests
+-- -----------------------------------------------------------------------------
+
+stateMachineTests :: TestTree
+stateMachineTests = testGroup "State Machines"
+  [ connectionStateTests
+  , sessionStateTests
+  , linkStateTests
+  ]
+
+-- Connection state machine tests
+connectionStateTests :: TestTree
+connectionStateTests = testGroup "Connection State Machine"
+  [ testGroup "Valid Transitions"
+      [ testCase "Start -> HDRSent (send header)" $
+          transitionConnection ConnStart ConnEvtSendHeader @?= Right ConnHDRSent
+      , testCase "Start -> HDRExch (recv header)" $
+          transitionConnection ConnStart ConnEvtRecvHeader @?= Right ConnHDRExch
+      , testCase "HDRSent -> HDRExch (recv header)" $
+          transitionConnection ConnHDRSent ConnEvtRecvHeader @?= Right ConnHDRExch
+      , testCase "HDRExch -> OpenSent (send OPEN)" $
+          transitionConnection ConnHDRExch ConnEvtSendOpen @?= Right ConnOpenSent
+      , testCase "HDRExch -> OpenRecv (recv OPEN)" $
+          transitionConnection ConnHDRExch ConnEvtRecvOpen @?= Right ConnOpenRecv
+      , testCase "OpenSent -> Opened (recv OPEN)" $
+          transitionConnection ConnOpenSent ConnEvtRecvOpen @?= Right ConnOpened
+      , testCase "OpenRecv -> Opened (send OPEN)" $
+          transitionConnection ConnOpenRecv ConnEvtSendOpen @?= Right ConnOpened
+      , testCase "Opened -> CloseSent (send CLOSE)" $
+          transitionConnection ConnOpened ConnEvtSendClose @?= Right ConnCloseSent
+      , testCase "Opened -> CloseRecv (recv CLOSE)" $
+          transitionConnection ConnOpened ConnEvtRecvClose @?= Right ConnCloseRecv
+      , testCase "CloseSent -> End (recv CLOSE)" $
+          transitionConnection ConnCloseSent ConnEvtRecvClose @?= Right ConnEnd
+      , testCase "CloseRecv -> End (send CLOSE)" $
+          transitionConnection ConnCloseRecv ConnEvtSendClose @?= Right ConnEnd
+      ]
+  , testGroup "Invalid Transitions"
+      [ testCase "Start -> Opened (send OPEN) - invalid" $
+          case transitionConnection ConnStart ConnEvtSendOpen of
+            Left (InvalidConnectionTransition ConnStart ConnEvtSendOpen) -> return ()
+            _ -> assertFailure "Should reject transition from Start to OpenSent without header exchange"
+      , testCase "HDRSent -> OpenSent (send OPEN) - invalid" $
+          case transitionConnection ConnHDRSent ConnEvtSendOpen of
+            Left (InvalidConnectionTransition ConnHDRSent ConnEvtSendOpen) -> return ()
+            _ -> assertFailure "Should reject OPEN before receiving header"
+      , testCase "OpenSent -> CloseSent (send CLOSE) - invalid" $
+          case transitionConnection ConnOpenSent ConnEvtSendClose of
+            Left (InvalidConnectionTransition ConnOpenSent ConnEvtSendClose) -> return ()
+            _ -> assertFailure "Should reject CLOSE before connection is opened"
+      , testCase "End -> Opened (send OPEN) - invalid" $
+          case transitionConnection ConnEnd ConnEvtSendOpen of
+            Left (InvalidConnectionTransition ConnEnd ConnEvtSendOpen) -> return ()
+            _ -> assertFailure "Should reject transitions from terminal state"
+      , testCase "Opened -> HDRSent (send header) - invalid" $
+          case transitionConnection ConnOpened ConnEvtSendHeader of
+            Left (InvalidConnectionTransition ConnOpened ConnEvtSendHeader) -> return ()
+            _ -> assertFailure "Should reject sending header after connection opened"
+      ]
+  , testGroup "State Machine Flow Tests"
+      [ testCase "Complete flow: initiator sends first" $ do
+          let s0 = ConnStart
+          let Right s1 = transitionConnection s0 ConnEvtSendHeader
+          s1 @?= ConnHDRSent
+          let Right s2 = transitionConnection s1 ConnEvtRecvHeader
+          s2 @?= ConnHDRExch
+          let Right s3 = transitionConnection s2 ConnEvtSendOpen
+          s3 @?= ConnOpenSent
+          let Right s4 = transitionConnection s3 ConnEvtRecvOpen
+          s4 @?= ConnOpened
+          let Right s5 = transitionConnection s4 ConnEvtSendClose
+          s5 @?= ConnCloseSent
+          let Right s6 = transitionConnection s5 ConnEvtRecvClose
+          s6 @?= ConnEnd
+      , testCase "Complete flow: responder receives first" $ do
+          let s0 = ConnStart
+          let Right s1 = transitionConnection s0 ConnEvtRecvHeader
+          s1 @?= ConnHDRExch
+          let Right s2 = transitionConnection s1 ConnEvtRecvOpen
+          s2 @?= ConnOpenRecv
+          let Right s3 = transitionConnection s2 ConnEvtSendOpen
+          s3 @?= ConnOpened
+          let Right s4 = transitionConnection s3 ConnEvtRecvClose
+          s4 @?= ConnCloseRecv
+          let Right s5 = transitionConnection s4 ConnEvtSendClose
+          s5 @?= ConnEnd
+      ]
+  ]
+
+-- Session state machine tests
+sessionStateTests :: TestTree
+sessionStateTests = testGroup "Session State Machine"
+  [ testGroup "Valid Transitions"
+      [ testCase "Unmapped -> BeginSent (send BEGIN)" $
+          transitionSession SessUnmapped SessEvtSendBegin @?= Right SessBeginSent
+      , testCase "Unmapped -> BeginRecv (recv BEGIN)" $
+          transitionSession SessUnmapped SessEvtRecvBegin @?= Right SessBeginRecv
+      , testCase "BeginSent -> Mapped (recv BEGIN)" $
+          transitionSession SessBeginSent SessEvtRecvBegin @?= Right SessMapped
+      , testCase "BeginRecv -> Mapped (send BEGIN)" $
+          transitionSession SessBeginRecv SessEvtSendBegin @?= Right SessMapped
+      , testCase "Mapped -> EndSent (send END)" $
+          transitionSession SessMapped SessEvtSendEnd @?= Right SessEndSent
+      , testCase "Mapped -> EndRecv (recv END)" $
+          transitionSession SessMapped SessEvtRecvEnd @?= Right SessEndRecv
+      , testCase "EndSent -> Unmapped (recv END)" $
+          transitionSession SessEndSent SessEvtRecvEnd @?= Right SessUnmapped
+      , testCase "EndRecv -> Unmapped (send END)" $
+          transitionSession SessEndRecv SessEvtSendEnd @?= Right SessUnmapped
+      ]
+  , testGroup "Invalid Transitions"
+      [ testCase "Unmapped -> Mapped (send BEGIN) - invalid" $
+          case transitionSession SessUnmapped SessEvtSendEnd of
+            Left (InvalidSessionTransition SessUnmapped SessEvtSendEnd) -> return ()
+            _ -> assertFailure "Should reject END before BEGIN"
+      , testCase "BeginSent -> EndSent (send END) - invalid" $
+          case transitionSession SessBeginSent SessEvtSendEnd of
+            Left (InvalidSessionTransition SessBeginSent SessEvtSendEnd) -> return ()
+            _ -> assertFailure "Should reject END before session is mapped"
+      , testCase "EndSent -> Mapped (send BEGIN) - invalid" $
+          case transitionSession SessEndSent SessEvtSendBegin of
+            Left (InvalidSessionTransition SessEndSent SessEvtSendBegin) -> return ()
+            _ -> assertFailure "Should reject BEGIN during END handshake"
+      ]
+  , testGroup "State Machine Flow Tests"
+      [ testCase "Complete flow: initiator sends first" $ do
+          let s0 = SessUnmapped
+          let Right s1 = transitionSession s0 SessEvtSendBegin
+          s1 @?= SessBeginSent
+          let Right s2 = transitionSession s1 SessEvtRecvBegin
+          s2 @?= SessMapped
+          let Right s3 = transitionSession s2 SessEvtSendEnd
+          s3 @?= SessEndSent
+          let Right s4 = transitionSession s3 SessEvtRecvEnd
+          s4 @?= SessUnmapped
+      , testCase "Complete flow: responder receives first" $ do
+          let s0 = SessUnmapped
+          let Right s1 = transitionSession s0 SessEvtRecvBegin
+          s1 @?= SessBeginRecv
+          let Right s2 = transitionSession s1 SessEvtSendBegin
+          s2 @?= SessMapped
+          let Right s3 = transitionSession s2 SessEvtRecvEnd
+          s3 @?= SessEndRecv
+          let Right s4 = transitionSession s3 SessEvtSendEnd
+          s4 @?= SessUnmapped
+      ]
+  ]
+
+-- Link state machine tests
+linkStateTests :: TestTree
+linkStateTests = testGroup "Link State Machine"
+  [ testGroup "Valid Transitions"
+      [ testCase "Detached -> AttachSent (send ATTACH)" $
+          transitionLink LinkDetached LinkEvtSendAttach @?= Right LinkAttachSent
+      , testCase "Detached -> AttachRecv (recv ATTACH)" $
+          transitionLink LinkDetached LinkEvtRecvAttach @?= Right LinkAttachRecv
+      , testCase "AttachSent -> Attached (recv ATTACH)" $
+          transitionLink LinkAttachSent LinkEvtRecvAttach @?= Right LinkAttached
+      , testCase "AttachRecv -> Attached (send ATTACH)" $
+          transitionLink LinkAttachRecv LinkEvtSendAttach @?= Right LinkAttached
+      , testCase "Attached -> DetachSent (send DETACH)" $
+          transitionLink LinkAttached LinkEvtSendDetach @?= Right LinkDetachSent
+      , testCase "Attached -> DetachRecv (recv DETACH)" $
+          transitionLink LinkAttached LinkEvtRecvDetach @?= Right LinkDetachRecv
+      , testCase "DetachSent -> Detached (recv DETACH)" $
+          transitionLink LinkDetachSent LinkEvtRecvDetach @?= Right LinkDetached
+      , testCase "DetachRecv -> Detached (send DETACH)" $
+          transitionLink LinkDetachRecv LinkEvtSendDetach @?= Right LinkDetached
+      ]
+  , testGroup "Invalid Transitions"
+      [ testCase "Detached -> Attached (send ATTACH) - invalid" $
+          case transitionLink LinkDetached LinkEvtSendDetach of
+            Left (InvalidLinkTransition LinkDetached LinkEvtSendDetach) -> return ()
+            _ -> assertFailure "Should reject DETACH before ATTACH"
+      , testCase "AttachSent -> DetachSent (send DETACH) - invalid" $
+          case transitionLink LinkAttachSent LinkEvtSendDetach of
+            Left (InvalidLinkTransition LinkAttachSent LinkEvtSendDetach) -> return ()
+            _ -> assertFailure "Should reject DETACH before link is attached"
+      , testCase "DetachSent -> Attached (recv ATTACH) - invalid" $
+          case transitionLink LinkDetachSent LinkEvtRecvAttach of
+            Left (InvalidLinkTransition LinkDetachSent LinkEvtRecvAttach) -> return ()
+            _ -> assertFailure "Should reject ATTACH during DETACH handshake"
+      ]
+  , testGroup "State Machine Flow Tests"
+      [ testCase "Complete flow: initiator sends first" $ do
+          let s0 = LinkDetached
+          let Right s1 = transitionLink s0 LinkEvtSendAttach
+          s1 @?= LinkAttachSent
+          let Right s2 = transitionLink s1 LinkEvtRecvAttach
+          s2 @?= LinkAttached
+          let Right s3 = transitionLink s2 LinkEvtSendDetach
+          s3 @?= LinkDetachSent
+          let Right s4 = transitionLink s3 LinkEvtRecvDetach
+          s4 @?= LinkDetached
+      , testCase "Complete flow: responder receives first" $ do
+          let s0 = LinkDetached
+          let Right s1 = transitionLink s0 LinkEvtRecvAttach
+          s1 @?= LinkAttachRecv
+          let Right s2 = transitionLink s1 LinkEvtSendAttach
+          s2 @?= LinkAttached
+          let Right s3 = transitionLink s2 LinkEvtRecvDetach
+          s3 @?= LinkDetachRecv
+          let Right s4 = transitionLink s3 LinkEvtSendDetach
+          s4 @?= LinkDetached
+      ]
   ]

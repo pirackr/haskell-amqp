@@ -70,8 +70,8 @@
 - [x] 7.4 Implement connection state transition function
 - [x] 7.5 Implement session state transition function
 - [x] 7.6 Implement link state transition function
-- [ ] 7.7 Write tests for valid state transitions
-- [ ] 7.8 Write tests for invalid state transition rejection
+- [x] 7.7 Write tests for valid state transitions
+- [x] 7.8 Write tests for invalid state transition rejection
 
 ## 8. Messaging - Message Structure
 

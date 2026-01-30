@@ -13,6 +13,9 @@ module Network.AMQP.Transport
   , ConnectionState(..)
   , SessionState(..)
   , LinkState(..)
+  , ConnectionEvent(..)
+  , SessionEvent(..)
+  , LinkEvent(..)
   , transitionConnection
   , transitionSession
   , transitionLink
