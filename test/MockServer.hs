@@ -90,6 +90,7 @@ data MockLinkState = MockLinkState
   { mockLinkState :: LinkState
   , mockLinkName :: String
   , mockLinkRole :: Role
+  , mockLinkTransfers :: [(Word32, ByteString)]  -- (delivery-id, payload)
   }
 
 -- | Start a mock AMQP server on the specified port
@@ -376,6 +377,12 @@ handlePerformative handle stateVar channel perf = case perf of
     sendPerformative handle channel (PerformativeDetach serverDetach)
     updateLinkState stateVar channel (detachHandle clientDetach) LinkEvtSendDetach
 
+  -- TRANSFER handling
+  PerformativeTransfer transfer -> do
+    -- Store the transfer in link state
+    storeTransfer stateVar channel (transferHandle transfer) (transferDeliveryId transfer) BS.empty
+    return ()
+
   _ -> return ()  -- Ignore other performatives for now
 
 -- | Send a performative on a channel
@@ -423,8 +430,32 @@ createLinkIfNeeded stateVar channel handle name role = do
                       { mockLinkState = LinkDetached
                       , mockLinkName = T.unpack name
                       , mockLinkRole = role
+                      , mockLinkTransfers = []
                       }
                     updatedLinks = Map.insert handle newLinkState (mockSessLinks sessState)
+                    updatedSessState = sessState { mockSessLinks = updatedLinks }
+                    updatedSessions = Map.insert channel updatedSessState (mockConnSessions connState)
+                    updatedConnState = connState { mockConnSessions = updatedSessions }
+                in s { mockConnections = Map.insert tid updatedConnState (mockConnections s) }
+
+-- | Store a received transfer in link state
+storeTransfer :: TVar MockState -> Word16 -> Word32 -> Maybe Word32 -> ByteString -> IO ()
+storeTransfer stateVar channel linkHandle mDeliveryId payload = do
+  tid <- myThreadId
+  atomically $ modifyTVar' stateVar $ \s ->
+    case Map.lookup tid (mockConnections s) of
+      Nothing -> s
+      Just connState ->
+        case Map.lookup channel (mockConnSessions connState) of
+          Nothing -> s
+          Just sessState ->
+            case Map.lookup linkHandle (mockSessLinks sessState) of
+              Nothing -> s
+              Just linkState ->
+                let deliveryId = maybe 0 id mDeliveryId
+                    newTransfers = mockLinkTransfers linkState ++ [(deliveryId, payload)]
+                    updatedLinkState = linkState { mockLinkTransfers = newTransfers }
+                    updatedLinks = Map.insert linkHandle updatedLinkState (mockSessLinks sessState)
                     updatedSessState = sessState { mockSessLinks = updatedLinks }
                     updatedSessions = Map.insert channel updatedSessState (mockConnSessions connState)
                     updatedConnState = connState { mockConnSessions = updatedSessions }
