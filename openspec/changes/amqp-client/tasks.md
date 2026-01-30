@@ -96,13 +96,13 @@
 
 - [x] 10.1 Create TCP listener that accepts connections
 - [x] 10.2 Implement connection handler that spawns per-connection thread
-- [ ] 10.3 Implement protocol header exchange
-- [ ] 10.4 Implement OPEN/CLOSE handling in mock
-- [ ] 10.5 Implement BEGIN/END handling in mock
-- [ ] 10.6 Implement ATTACH/DETACH handling in mock
-- [ ] 10.7 Add connection state tracking in mock
-- [ ] 10.8 Add session state tracking in mock
-- [ ] 10.9 Add link state tracking in mock
+- [x] 10.3 Implement protocol header exchange
+- [x] 10.4 Implement OPEN/CLOSE handling in mock
+- [x] 10.5 Implement BEGIN/END handling in mock
+- [x] 10.6 Implement ATTACH/DETACH handling in mock
+- [x] 10.7 Add connection state tracking in mock
+- [x] 10.8 Add session state tracking in mock
+- [x] 10.9 Add link state tracking in mock
 - [ ] 10.10 Write tests verifying mock handles basic handshake
 
 ## 11. Testing - Mock Message Handling
