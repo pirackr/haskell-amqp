@@ -126,6 +126,7 @@ tests = testGroup "AMQP Tests"
   , performativeTests
   , stateMachineTests
   , messagingTests
+  , deliveryStateTests
   ]
 
 -- -----------------------------------------------------------------------------
@@ -1392,4 +1393,142 @@ messageRoundtripTests = testGroup "Complete Message Roundtrips"
           footer = [(AMQPSymbol "signature", AMQPBinary (BS.pack [0xFF, 0xEE]))]
           msg = Message (Just header) (Just props) (Just appProps) (Just body) (Just footer)
       in roundtripMessage msg @?= msg
+  ]
+
+-- -----------------------------------------------------------------------------
+-- Delivery State Tests
+-- -----------------------------------------------------------------------------
+
+-- | Test that a delivery state roundtrips successfully through encoding and decoding
+roundtripDeliveryState :: DeliveryState -> DeliveryState
+roundtripDeliveryState state = runGet getDeliveryState (runPut (putDeliveryState state))
+
+deliveryStateTests :: TestTree
+deliveryStateTests = testGroup "Delivery States"
+  [ acceptedTests
+  , rejectedTests
+  , releasedTests
+  , modifiedTests
+  ]
+
+-- Accepted state tests
+acceptedTests :: TestTree
+acceptedTests = testGroup "Accepted State"
+  [ testCase "accepted roundtrip" $
+      roundtripDeliveryState StateAccepted @?= StateAccepted
+  , testCase "accepted encoding has descriptor 0x24" $
+      let encoded = runPut (putDeliveryState StateAccepted)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000024) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x24"
+  , testCase "accepted has empty list" $
+      let encoded = runPut (putDeliveryState StateAccepted)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed _ (AMQPList []) -> return ()
+           _ -> assertFailure "Expected empty list"
+  ]
+
+-- Rejected state tests
+rejectedTests :: TestTree
+rejectedTests = testGroup "Rejected State"
+  [ testCase "rejected without error roundtrip" $
+      let rejected = Rejected { rejectedError = Nothing }
+          state = StateRejected rejected
+      in roundtripDeliveryState state @?= state
+  , testCase "rejected with error roundtrip" $
+      let error = Error
+            { errorCondition = "amqp:internal-error"
+            , errorDescription = Just "Message rejected due to internal error"
+            , errorInfo = Nothing
+            }
+          rejected = Rejected { rejectedError = Just error }
+          state = StateRejected rejected
+      in roundtripDeliveryState state @?= state
+  , testCase "rejected with error and info roundtrip" $
+      let error = Error
+            { errorCondition = "amqp:unauthorized-access"
+            , errorDescription = Just "Access denied"
+            , errorInfo = Just [(AMQPSymbol "user", AMQPString "guest")]
+            }
+          rejected = Rejected { rejectedError = Just error }
+          state = StateRejected rejected
+      in roundtripDeliveryState state @?= state
+  , testCase "rejected encoding has descriptor 0x25" $
+      let rejected = Rejected { rejectedError = Nothing }
+          state = StateRejected rejected
+          encoded = runPut (putDeliveryState state)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000025) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x25"
+  ]
+
+-- Released state tests
+releasedTests :: TestTree
+releasedTests = testGroup "Released State"
+  [ testCase "released roundtrip" $
+      roundtripDeliveryState StateReleased @?= StateReleased
+  , testCase "released encoding has descriptor 0x26" $
+      let encoded = runPut (putDeliveryState StateReleased)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000026) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x26"
+  , testCase "released has empty list" $
+      let encoded = runPut (putDeliveryState StateReleased)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed _ (AMQPList []) -> return ()
+           _ -> assertFailure "Expected empty list"
+  ]
+
+-- Modified state tests
+modifiedTests :: TestTree
+modifiedTests = testGroup "Modified State"
+  [ testCase "modified minimal roundtrip" $
+      let modified = Modified
+            { modifiedDeliveryFailed = Nothing
+            , modifiedUndeliverableHere = Nothing
+            , modifiedMessageAnnotations = Nothing
+            }
+          state = StateModified modified
+      in roundtripDeliveryState state @?= state
+  , testCase "modified with delivery-failed roundtrip" $
+      let modified = Modified
+            { modifiedDeliveryFailed = Just True
+            , modifiedUndeliverableHere = Nothing
+            , modifiedMessageAnnotations = Nothing
+            }
+          state = StateModified modified
+      in roundtripDeliveryState state @?= state
+  , testCase "modified with undeliverable-here roundtrip" $
+      let modified = Modified
+            { modifiedDeliveryFailed = Nothing
+            , modifiedUndeliverableHere = Just True
+            , modifiedMessageAnnotations = Nothing
+            }
+          state = StateModified modified
+      in roundtripDeliveryState state @?= state
+  , testCase "modified with all fields roundtrip" $
+      let modified = Modified
+            { modifiedDeliveryFailed = Just True
+            , modifiedUndeliverableHere = Just False
+            , modifiedMessageAnnotations = Just [(AMQPSymbol "retry-count", AMQPUInt 3)]
+            }
+          state = StateModified modified
+      in roundtripDeliveryState state @?= state
+  , testCase "modified encoding has descriptor 0x27" $
+      let modified = Modified
+            { modifiedDeliveryFailed = Nothing
+            , modifiedUndeliverableHere = Nothing
+            , modifiedMessageAnnotations = Nothing
+            }
+          state = StateModified modified
+          encoded = runPut (putDeliveryState state)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000027) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x27"
   ]

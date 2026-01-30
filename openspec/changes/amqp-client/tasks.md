@@ -85,12 +85,12 @@
 
 ## 9. Messaging - Delivery States
 
-- [ ] 9.1 Define DeliveryState ADT (Accepted, Rejected, Released, Modified)
-- [ ] 9.2 Define Rejected with error condition
-- [ ] 9.3 Define Modified with delivery-failed and undeliverable-here flags
-- [ ] 9.4 Implement encoding for delivery states
-- [ ] 9.5 Implement decoding for delivery states
-- [ ] 9.6 Write roundtrip tests for delivery states
+- [x] 9.1 Define DeliveryState ADT (Accepted, Rejected, Released, Modified)
+- [x] 9.2 Define Rejected with error condition
+- [x] 9.3 Define Modified with delivery-failed and undeliverable-here flags
+- [x] 9.4 Implement encoding for delivery states
+- [x] 9.5 Implement decoding for delivery states
+- [x] 9.6 Write roundtrip tests for delivery states
 
 ## 10. Testing - Mock Server Core
 

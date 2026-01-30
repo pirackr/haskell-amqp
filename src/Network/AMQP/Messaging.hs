@@ -13,9 +13,15 @@ module Network.AMQP.Messaging
   , MessageBody(..)
     -- * Message ID and Correlation ID
   , MessageId(..)
+    -- * Delivery States
+  , DeliveryState(..)
+  , Rejected(..)
+  , Modified(..)
     -- * Encoding/Decoding
   , putMessage
   , getMessage
+  , putDeliveryState
+  , getDeliveryState
   ) where
 
 import Data.Binary.Get (Get, isEmpty)
@@ -26,6 +32,7 @@ import Data.Word (Word8, Word32, Word64)
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.UUID (UUID)
 import Network.AMQP.Types (AMQPValue(..), putAMQPValue, getAMQPValue)
+import Network.AMQP.Performatives (Error(..))
 
 -- | AMQP 1.0 message structure (section 3.2)
 -- A message consists of multiple optional sections, each encoded as a described type.
@@ -96,6 +103,29 @@ data MessageBody
   | AmqpSequenceBody ![[AMQPValue]]     -- ^ Sequence of AMQP lists (descriptor 0x00000076)
   | AmqpValueBody !AMQPValue            -- ^ Single AMQP value (descriptor 0x00000077)
   deriving (Eq, Show)
+
+-- | Delivery states (section 3.4)
+-- Describes the state of a message delivery
+data DeliveryState
+  = StateAccepted                       -- ^ Message accepted (descriptor 0x00000024)
+  | StateRejected !Rejected             -- ^ Message rejected (descriptor 0x00000025)
+  | StateReleased                       -- ^ Message released (descriptor 0x00000026)
+  | StateModified !Modified             -- ^ Message modified (descriptor 0x00000027)
+  deriving (Eq, Show)
+
+-- | Rejected delivery state (descriptor 0x00000025)
+-- Contains error information about why the message was rejected
+data Rejected = Rejected
+  { rejectedError :: !(Maybe Error)     -- ^ Error condition causing rejection
+  } deriving (Eq, Show)
+
+-- | Modified delivery state (descriptor 0x00000027)
+-- Indicates message was modified and may be re-delivered
+data Modified = Modified
+  { modifiedDeliveryFailed      :: !(Maybe Bool)   -- ^ True if delivery failed
+  , modifiedUndeliverableHere   :: !(Maybe Bool)   -- ^ True if undeliverable at this node
+  , modifiedMessageAnnotations  :: !(Maybe [(AMQPValue, AMQPValue)])  -- ^ Updated annotations
+  } deriving (Eq, Show)
 
 -- Helper function to create a list of optional fields
 optionalField :: Maybe a -> (a -> AMQPValue) -> AMQPValue
@@ -403,3 +433,120 @@ getField fields idx
   | otherwise = case fields !! idx of
       AMQPNull -> Nothing
       val -> Just val
+
+-- -----------------------------------------------------------------------------
+-- Delivery States Encoding/Decoding
+-- -----------------------------------------------------------------------------
+
+-- | Encode a delivery state as a described type
+putDeliveryState :: DeliveryState -> Put
+putDeliveryState state = putAMQPValue (encodeDeliveryState state)
+
+-- | Decode a delivery state from a described type
+getDeliveryState :: Get DeliveryState
+getDeliveryState = do
+  value <- getAMQPValue
+  case value of
+    AMQPDescribed descriptor fields -> decodeDeliveryState descriptor fields
+    _ -> fail "getDeliveryState: expected described type"
+
+-- Encode delivery state
+encodeDeliveryState :: DeliveryState -> AMQPValue
+encodeDeliveryState StateAccepted = AMQPDescribed
+  (AMQPULong 0x00000024)
+  (AMQPList [])
+
+encodeDeliveryState (StateRejected rejected) = AMQPDescribed
+  (AMQPULong 0x00000025)
+  (AMQPList
+    [ optionalField (rejectedError rejected) encodeError
+    ])
+
+encodeDeliveryState StateReleased = AMQPDescribed
+  (AMQPULong 0x00000026)
+  (AMQPList [])
+
+encodeDeliveryState (StateModified modified) = AMQPDescribed
+  (AMQPULong 0x00000027)
+  (AMQPList
+    [ optionalField (modifiedDeliveryFailed modified) AMQPBool
+    , optionalField (modifiedUndeliverableHere modified) AMQPBool
+    , optionalField (modifiedMessageAnnotations modified) AMQPMap
+    ])
+
+-- Encode Error (descriptor 0x0000001d)
+-- Internal helper function for encoding Error values
+encodeError :: Error -> AMQPValue
+encodeError err = AMQPDescribed
+  (AMQPULong 0x0000001d)
+  (AMQPList
+    [ AMQPSymbol (errorCondition err)
+    , optionalField (errorDescription err) AMQPString
+    , optionalField (errorInfo err) AMQPMap
+    ])
+
+-- Decode delivery state based on descriptor
+decodeDeliveryState :: AMQPValue -> AMQPValue -> Get DeliveryState
+decodeDeliveryState (AMQPULong descriptor) fields =
+  case descriptor of
+    0x00000024 -> return StateAccepted
+    0x00000025 -> StateRejected <$> decodeRejected fields
+    0x00000026 -> return StateReleased
+    0x00000027 -> StateModified <$> decodeModified fields
+    _ -> fail $ "decodeDeliveryState: unknown descriptor " ++ show descriptor
+decodeDeliveryState _ _ = fail "decodeDeliveryState: descriptor must be ulong"
+
+-- Decode Rejected
+decodeRejected :: AMQPValue -> Get Rejected
+decodeRejected (AMQPList fields) = do
+  error <- case getField fields 0 of
+    Just val -> Just <$> decodeError val
+    Nothing -> return Nothing
+
+  return $ Rejected { rejectedError = error }
+decodeRejected _ = fail "decodeRejected: expected list"
+
+-- Decode Modified
+decodeModified :: AMQPValue -> Get Modified
+decodeModified (AMQPList fields) = do
+  let deliveryFailed = case getField fields 0 of
+        Just (AMQPBool b) -> Just b
+        _ -> Nothing
+
+  let undeliverableHere = case getField fields 1 of
+        Just (AMQPBool b) -> Just b
+        _ -> Nothing
+
+  let messageAnnotations = case getField fields 2 of
+        Just (AMQPMap m) -> Just m
+        _ -> Nothing
+
+  return $ Modified
+    { modifiedDeliveryFailed = deliveryFailed
+    , modifiedUndeliverableHere = undeliverableHere
+    , modifiedMessageAnnotations = messageAnnotations
+    }
+decodeModified _ = fail "decodeModified: expected list"
+
+-- Decode Error (descriptor 0x0000001d)
+-- Internal helper function for decoding Error values
+decodeError :: AMQPValue -> Get Error
+decodeError (AMQPDescribed (AMQPULong 0x0000001d) (AMQPList fields)) = do
+  condition <- case getField fields 0 of
+    Just (AMQPSymbol s) -> return s
+    _ -> fail "decodeError: missing condition"
+
+  let description = case getField fields 1 of
+        Just (AMQPString s) -> Just s
+        _ -> Nothing
+
+  let info = case getField fields 2 of
+        Just (AMQPMap m) -> Just m
+        _ -> Nothing
+
+  return $ Error
+    { errorCondition = condition
+    , errorDescription = description
+    , errorInfo = info
+    }
+decodeError _ = fail "decodeError: expected described type with descriptor 0x1d"
