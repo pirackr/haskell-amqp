@@ -13,17 +13,19 @@ module MockServer
   , MockLinkState(..)
   ) where
 
-import Control.Concurrent (ThreadId, forkIO, killThread)
+import Control.Concurrent (ThreadId, forkIO, killThread, myThreadId)
 import Control.Concurrent.STM
 import Control.Exception (bracket, finally, catch, SomeException)
 import Control.Monad (forever, when)
-import Data.Binary.Get (runGet, runGetOrFail)
+import Data.Binary.Get (runGet, runGetOrFail, getWord32be)
 import Data.Binary.Put (runPut)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Word (Word16, Word32)
 import Network.Socket
   ( Socket
@@ -159,19 +161,268 @@ protocolHeaderExchange handle stateVar = do
   -- Validate client header
   when (clientHeader == amqpProtocolHeader) $ do
     -- Update state: received header
-    -- TODO: Update connection state
+    updateConnectionState stateVar ConnEvtRecvHeader
 
     -- Send our protocol header
     BS.hPut handle amqpProtocolHeader
 
-    -- Update state: sent header
-    -- TODO: Update connection state
-
+    -- Update state: sent header (after receiving, we're now in HDRExch state)
+    -- No need to transition again as receiving header already put us in HDRExch
     return ()
+
+-- | Update connection state based on event
+updateConnectionState :: TVar MockState -> ConnectionEvent -> IO ()
+updateConnectionState stateVar event = do
+  tid <- myThreadId
+  atomically $ modifyTVar' stateVar $ \s ->
+    case Map.lookup tid (mockConnections s) of
+      Nothing -> s
+      Just connState ->
+        let oldState = mockConnState connState
+            newStateE = transitionConnection oldState event
+        in case newStateE of
+          Left _ -> s  -- Invalid transition, keep old state
+          Right newState ->
+            let updatedConnState = connState { mockConnState = newState }
+            in s { mockConnections = Map.insert tid updatedConnState (mockConnections s) }
+
+-- | Update session state based on event
+updateSessionState :: TVar MockState -> Word16 -> SessionEvent -> IO ()
+updateSessionState stateVar channel event = do
+  tid <- myThreadId
+  atomically $ modifyTVar' stateVar $ \s ->
+    case Map.lookup tid (mockConnections s) of
+      Nothing -> s
+      Just connState ->
+        case Map.lookup channel (mockConnSessions connState) of
+          Nothing -> s
+          Just sessState ->
+            let oldState = mockSessState sessState
+                newStateE = transitionSession oldState event
+            in case newStateE of
+              Left _ -> s
+              Right newState ->
+                let updatedSessState = sessState { mockSessState = newState }
+                    updatedSessions = Map.insert channel updatedSessState (mockConnSessions connState)
+                    updatedConnState = connState { mockConnSessions = updatedSessions }
+                in s { mockConnections = Map.insert tid updatedConnState (mockConnections s) }
+
+-- | Update link state based on event
+updateLinkState :: TVar MockState -> Word16 -> Word32 -> LinkEvent -> IO ()
+updateLinkState stateVar channel handle event = do
+  tid <- myThreadId
+  atomically $ modifyTVar' stateVar $ \s ->
+    case Map.lookup tid (mockConnections s) of
+      Nothing -> s
+      Just connState ->
+        case Map.lookup channel (mockConnSessions connState) of
+          Nothing -> s
+          Just sessState ->
+            case Map.lookup handle (mockSessLinks sessState) of
+              Nothing -> s
+              Just linkState ->
+                let oldState = mockLinkState linkState
+                    newStateE = transitionLink oldState event
+                in case newStateE of
+                  Left _ -> s
+                  Right newState ->
+                    let updatedLinkState = linkState { mockLinkState = newState }
+                        updatedLinks = Map.insert handle updatedLinkState (mockSessLinks sessState)
+                        updatedSessState = sessState { mockSessLinks = updatedLinks }
+                        updatedSessions = Map.insert channel updatedSessState (mockConnSessions connState)
+                        updatedConnState = connState { mockConnSessions = updatedSessions }
+                    in s { mockConnections = Map.insert tid updatedConnState (mockConnections s) }
 
 -- | Handle OPEN/CLOSE performatives
 openCloseHandling :: Handle -> TVar MockState -> IO ()
 openCloseHandling handle stateVar = do
-  -- Read frames and handle OPEN/CLOSE
-  -- TODO: Implement frame reading and performative handling
-  return ()
+  -- Main frame processing loop
+  frameLoop handle stateVar
+    `catch` (\(e :: SomeException) -> return ())
+
+-- | Main frame processing loop
+frameLoop :: Handle -> TVar MockState -> IO ()
+frameLoop handle stateVar = do
+  -- Read frame size (4 bytes)
+  sizeBytes <- BS.hGet handle 4
+  if BS.length sizeBytes < 4
+    then return ()  -- Connection closed
+    else do
+      let size = runGet getWord32be (LBS.fromStrict sizeBytes)
+      -- Read rest of frame (size - 4 bytes already read)
+      restBytes <- BS.hGet handle (fromIntegral size - 4)
+      let frameBytes = sizeBytes <> restBytes
+
+      -- Parse frame
+      case runGetOrFail getFrame (LBS.fromStrict frameBytes) of
+        Left _ -> return ()  -- Invalid frame
+        Right (_, _, frame) -> do
+          -- Handle frame
+          handleFrame handle stateVar frame
+          -- Continue processing
+          frameLoop handle stateVar
+
+-- | Handle a single frame
+handleFrame :: Handle -> TVar MockState -> Frame -> IO ()
+handleFrame handle stateVar frame = do
+  -- Parse performative from frame payload
+  case runGetOrFail getPerformative (LBS.fromStrict (framePayload frame)) of
+    Left _ -> return ()  -- Invalid performative
+    Right (_, _, perf) -> handlePerformative handle stateVar (frameChannel frame) perf
+
+-- | Handle a performative
+handlePerformative :: Handle -> TVar MockState -> Word16 -> Performative -> IO ()
+handlePerformative handle stateVar channel perf = case perf of
+  -- OPEN handling
+  PerformativeOpen clientOpen -> do
+    updateConnectionState stateVar ConnEvtRecvOpen
+
+    -- Send OPEN response
+    let serverOpen = Open
+          { openContainerId = "mock-server"
+          , openHostname = Nothing
+          , openMaxFrameSize = Just 65536
+          , openChannelMax = Just 255
+          , openIdleTimeOut = Nothing
+          , openOutgoingLocales = Nothing
+          , openIncomingLocales = Nothing
+          , openOfferedCapabilities = Nothing
+          , openDesiredCapabilities = Nothing
+          , openProperties = Nothing
+          }
+    sendPerformative handle 0 (PerformativeOpen serverOpen)
+    updateConnectionState stateVar ConnEvtSendOpen
+
+  -- CLOSE handling
+  PerformativeClose clientClose -> do
+    updateConnectionState stateVar ConnEvtRecvClose
+
+    -- Send CLOSE response
+    let serverClose = Close { closeError = Nothing }
+    sendPerformative handle 0 (PerformativeClose serverClose)
+    updateConnectionState stateVar ConnEvtSendClose
+
+  -- BEGIN handling
+  PerformativeBegin clientBegin -> do
+    -- Create session state if it doesn't exist
+    createSessionIfNeeded stateVar channel
+    updateSessionState stateVar channel SessEvtRecvBegin
+
+    -- Send BEGIN response
+    let serverBegin = Begin
+          { beginRemoteChannel = Just channel
+          , beginNextOutgoingId = 0
+          , beginIncomingWindow = 2048
+          , beginOutgoingWindow = 2048
+          , beginHandleMax = Just 255
+          , beginOfferedCapabilities = Nothing
+          , beginDesiredCapabilities = Nothing
+          , beginProperties = Nothing
+          }
+    sendPerformative handle channel (PerformativeBegin serverBegin)
+    updateSessionState stateVar channel SessEvtSendBegin
+
+  -- END handling
+  PerformativeEnd clientEnd -> do
+    updateSessionState stateVar channel SessEvtRecvEnd
+
+    -- Send END response
+    let serverEnd = End { endError = Nothing }
+    sendPerformative handle channel (PerformativeEnd serverEnd)
+    updateSessionState stateVar channel SessEvtSendEnd
+
+  -- ATTACH handling
+  PerformativeAttach clientAttach -> do
+    -- Create link state if it doesn't exist
+    createLinkIfNeeded stateVar channel (attachHandle clientAttach) (attachName clientAttach) (attachRole clientAttach)
+    updateLinkState stateVar channel (attachHandle clientAttach) LinkEvtRecvAttach
+
+    -- Send ATTACH response (mirror the client's attach but with opposite role)
+    let serverRole = case attachRole clientAttach of
+          RoleSender -> RoleReceiver
+          RoleReceiver -> RoleSender
+    let serverAttach = Attach
+          { attachName = attachName clientAttach
+          , attachHandle = attachHandle clientAttach
+          , attachRole = serverRole
+          , attachSndSettleMode = attachSndSettleMode clientAttach
+          , attachRcvSettleMode = attachRcvSettleMode clientAttach
+          , attachSource = attachSource clientAttach
+          , attachTarget = attachTarget clientAttach
+          , attachUnsettled = Nothing
+          , attachIncompleteUnsettled = Nothing
+          , attachInitialDeliveryCount = if serverRole == RoleReceiver then Just 0 else Nothing
+          , attachMaxMessageSize = Nothing
+          , attachOfferedCapabilities = Nothing
+          , attachDesiredCapabilities = Nothing
+          , attachProperties = Nothing
+          }
+    sendPerformative handle channel (PerformativeAttach serverAttach)
+    updateLinkState stateVar channel (attachHandle clientAttach) LinkEvtSendAttach
+
+  -- DETACH handling
+  PerformativeDetach clientDetach -> do
+    updateLinkState stateVar channel (detachHandle clientDetach) LinkEvtRecvDetach
+
+    -- Send DETACH response
+    let serverDetach = Detach
+          { detachHandle = detachHandle clientDetach
+          , detachClosed = detachClosed clientDetach
+          , detachError = Nothing
+          }
+    sendPerformative handle channel (PerformativeDetach serverDetach)
+    updateLinkState stateVar channel (detachHandle clientDetach) LinkEvtSendDetach
+
+  _ -> return ()  -- Ignore other performatives for now
+
+-- | Send a performative on a channel
+sendPerformative :: Handle -> Word16 -> Performative -> IO ()
+sendPerformative handle channel perf = do
+  let payload = LBS.toStrict $ runPut (putPerformative perf)
+  let frame = Frame AMQPFrameType channel payload
+  let frameBytes = LBS.toStrict $ runPut (putFrame frame)
+  BS.hPut handle frameBytes
+
+-- | Create session state if it doesn't exist
+createSessionIfNeeded :: TVar MockState -> Word16 -> IO ()
+createSessionIfNeeded stateVar channel = do
+  tid <- myThreadId
+  atomically $ modifyTVar' stateVar $ \s ->
+    case Map.lookup tid (mockConnections s) of
+      Nothing -> s
+      Just connState ->
+        if Map.member channel (mockConnSessions connState)
+          then s
+          else
+            let newSessState = MockSessionState
+                  { mockSessState = SessUnmapped
+                  , mockSessLinks = Map.empty
+                  }
+                updatedSessions = Map.insert channel newSessState (mockConnSessions connState)
+                updatedConnState = connState { mockConnSessions = updatedSessions }
+            in s { mockConnections = Map.insert tid updatedConnState (mockConnections s) }
+
+-- | Create link state if it doesn't exist
+createLinkIfNeeded :: TVar MockState -> Word16 -> Word32 -> Text -> Role -> IO ()
+createLinkIfNeeded stateVar channel handle name role = do
+  tid <- myThreadId
+  atomically $ modifyTVar' stateVar $ \s ->
+    case Map.lookup tid (mockConnections s) of
+      Nothing -> s
+      Just connState ->
+        case Map.lookup channel (mockConnSessions connState) of
+          Nothing -> s
+          Just sessState ->
+            if Map.member handle (mockSessLinks sessState)
+              then s
+              else
+                let newLinkState = MockLinkState
+                      { mockLinkState = LinkDetached
+                      , mockLinkName = T.unpack name
+                      , mockLinkRole = role
+                      }
+                    updatedLinks = Map.insert handle newLinkState (mockSessLinks sessState)
+                    updatedSessState = sessState { mockSessLinks = updatedLinks }
+                    updatedSessions = Map.insert channel updatedSessState (mockConnSessions connState)
+                    updatedConnState = connState { mockConnSessions = updatedSessions }
+                in s { mockConnections = Map.insert tid updatedConnState (mockConnections s) }
