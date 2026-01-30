@@ -21,6 +21,7 @@ import Data.Word (Word8, Word16, Word32, Word64)
 
 import Network.AMQP.Types
 import Network.AMQP.Transport
+import Network.AMQP.Messaging
 
 -- -----------------------------------------------------------------------------
 -- Test Helpers and Utilities
@@ -124,6 +125,7 @@ tests = testGroup "AMQP Tests"
   , decodingFormatTests
   , performativeTests
   , stateMachineTests
+  , messagingTests
   ]
 
 -- -----------------------------------------------------------------------------
@@ -1122,4 +1124,272 @@ linkStateTests = testGroup "Link State Machine"
           let Right s4 = transitionLink s3 LinkEvtSendDetach
           s4 @?= LinkDetached
       ]
+  ]
+
+-- -----------------------------------------------------------------------------
+-- Messaging Tests
+-- -----------------------------------------------------------------------------
+
+-- | Test that a message roundtrips successfully through encoding and decoding
+roundtripMessage :: Message -> Message
+roundtripMessage m = runGet getMessage (runPut (putMessage m))
+
+messagingTests :: TestTree
+messagingTests = testGroup "Messaging"
+  [ headerTests
+  , propertiesTests
+  , messageBodyTests
+  , messageRoundtripTests
+  ]
+
+-- Header tests
+headerTests :: TestTree
+headerTests = testGroup "Header Section"
+  [ testCase "minimal header roundtrip" $
+      let header = Header
+            { headerDurable = Nothing
+            , headerPriority = Nothing
+            , headerTtl = Nothing
+            , headerFirstAcquirer = Nothing
+            , headerDeliveryCount = Nothing
+            }
+          msg = Message (Just header) Nothing Nothing Nothing Nothing
+      in roundtripMessage msg @?= msg
+  , testCase "header with all fields roundtrip" $
+      let header = Header
+            { headerDurable = Just True
+            , headerPriority = Just 5
+            , headerTtl = Just 60000
+            , headerFirstAcquirer = Just False
+            , headerDeliveryCount = Just 3
+            }
+          msg = Message (Just header) Nothing Nothing Nothing Nothing
+      in roundtripMessage msg @?= msg
+  , testCase "header encoding has descriptor 0x70" $
+      let header = Header
+            { headerDurable = Just True
+            , headerPriority = Nothing
+            , headerTtl = Nothing
+            , headerFirstAcquirer = Nothing
+            , headerDeliveryCount = Nothing
+            }
+          msg = Message (Just header) Nothing Nothing Nothing Nothing
+          encoded = runPut (putMessage msg)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000070) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x70"
+  ]
+
+-- Properties tests
+propertiesTests :: TestTree
+propertiesTests = testGroup "Properties Section"
+  [ testCase "minimal properties roundtrip" $
+      let props = Properties
+            { propertiesMessageId = Nothing
+            , propertiesUserId = Nothing
+            , propertiesTo = Nothing
+            , propertiesSubject = Nothing
+            , propertiesReplyTo = Nothing
+            , propertiesCorrelationId = Nothing
+            , propertiesContentType = Nothing
+            , propertiesContentEncoding = Nothing
+            , propertiesAbsoluteExpiryTime = Nothing
+            , propertiesCreationTime = Nothing
+            , propertiesGroupId = Nothing
+            , propertiesGroupSequence = Nothing
+            , propertiesReplyToGroupId = Nothing
+            }
+          msg = Message Nothing (Just props) Nothing Nothing Nothing
+      in roundtripMessage msg @?= msg
+  , testCase "properties with message-id (ulong) roundtrip" $
+      let props = Properties
+            { propertiesMessageId = Just (MessageIdULong 12345)
+            , propertiesUserId = Nothing
+            , propertiesTo = Just "queue/orders"
+            , propertiesSubject = Just "Order Notification"
+            , propertiesReplyTo = Nothing
+            , propertiesCorrelationId = Nothing
+            , propertiesContentType = Just "application/json"
+            , propertiesContentEncoding = Nothing
+            , propertiesAbsoluteExpiryTime = Nothing
+            , propertiesCreationTime = Just 1000.0
+            , propertiesGroupId = Nothing
+            , propertiesGroupSequence = Nothing
+            , propertiesReplyToGroupId = Nothing
+            }
+          msg = Message Nothing (Just props) Nothing Nothing Nothing
+      in roundtripMessage msg @?= msg
+  , testCase "properties with message-id (uuid) roundtrip" $
+      let uuid = fromWords 0x12345678 0x9abcdef0 0x11223344 0x55667788
+          props = Properties
+            { propertiesMessageId = Just (MessageIdUuid uuid)
+            , propertiesUserId = Just (BS.pack [0x01, 0x02, 0x03])
+            , propertiesTo = Nothing
+            , propertiesSubject = Nothing
+            , propertiesReplyTo = Just "queue/responses"
+            , propertiesCorrelationId = Just (MessageIdString "correlation-123")
+            , propertiesContentType = Nothing
+            , propertiesContentEncoding = Nothing
+            , propertiesAbsoluteExpiryTime = Nothing
+            , propertiesCreationTime = Nothing
+            , propertiesGroupId = Just "group-1"
+            , propertiesGroupSequence = Just 5
+            , propertiesReplyToGroupId = Nothing
+            }
+          msg = Message Nothing (Just props) Nothing Nothing Nothing
+      in roundtripMessage msg @?= msg
+  , testCase "properties encoding has descriptor 0x73" $
+      let props = Properties
+            { propertiesMessageId = Just (MessageIdULong 1)
+            , propertiesUserId = Nothing
+            , propertiesTo = Nothing
+            , propertiesSubject = Nothing
+            , propertiesReplyTo = Nothing
+            , propertiesCorrelationId = Nothing
+            , propertiesContentType = Nothing
+            , propertiesContentEncoding = Nothing
+            , propertiesAbsoluteExpiryTime = Nothing
+            , propertiesCreationTime = Nothing
+            , propertiesGroupId = Nothing
+            , propertiesGroupSequence = Nothing
+            , propertiesReplyToGroupId = Nothing
+            }
+          msg = Message Nothing (Just props) Nothing Nothing Nothing
+          encoded = runPut (putMessage msg)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000073) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x73"
+  ]
+
+-- Message body tests
+messageBodyTests :: TestTree
+messageBodyTests = testGroup "Message Body"
+  [ testCase "data body roundtrip" $
+      let body = DataBody [BS.pack [0x01, 0x02, 0x03], BS.pack [0x04, 0x05]]
+          msg = Message Nothing Nothing Nothing (Just body) Nothing
+      in roundtripMessage msg @?= msg
+  , testCase "amqp-sequence body roundtrip" $
+      let body = AmqpSequenceBody [[AMQPInt 1, AMQPString "hello"], [AMQPBool True]]
+          msg = Message Nothing Nothing Nothing (Just body) Nothing
+      in roundtripMessage msg @?= msg
+  , testCase "amqp-value body roundtrip" $
+      let body = AmqpValueBody (AMQPString "Hello, AMQP!")
+          msg = Message Nothing Nothing Nothing (Just body) Nothing
+      in roundtripMessage msg @?= msg
+  , testCase "data body encoding has descriptor 0x75" $
+      let body = DataBody [BS.pack [0xAA, 0xBB]]
+          msg = Message Nothing Nothing Nothing (Just body) Nothing
+          encoded = runPut (putMessage msg)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000075) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x75"
+  , testCase "amqp-sequence encoding has descriptor 0x76" $
+      let body = AmqpSequenceBody [[AMQPNull]]
+          msg = Message Nothing Nothing Nothing (Just body) Nothing
+          encoded = runPut (putMessage msg)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000076) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x76"
+  , testCase "amqp-value encoding has descriptor 0x77" $
+      let body = AmqpValueBody (AMQPInt 42)
+          msg = Message Nothing Nothing Nothing (Just body) Nothing
+          encoded = runPut (putMessage msg)
+          decoded = runGet getAMQPValue encoded
+      in case decoded of
+           AMQPDescribed (AMQPULong 0x00000077) _ -> return ()
+           _ -> assertFailure "Expected descriptor 0x77"
+  ]
+
+-- Complete message roundtrip tests
+messageRoundtripTests :: TestTree
+messageRoundtripTests = testGroup "Complete Message Roundtrips"
+  [ testCase "message with header and data body" $
+      let header = Header
+            { headerDurable = Just True
+            , headerPriority = Just 4
+            , headerTtl = Nothing
+            , headerFirstAcquirer = Nothing
+            , headerDeliveryCount = Nothing
+            }
+          body = DataBody [BS.pack [0x48, 0x65, 0x6c, 0x6c, 0x6f]]  -- "Hello"
+          msg = Message (Just header) Nothing Nothing (Just body) Nothing
+      in roundtripMessage msg @?= msg
+  , testCase "message with properties and amqp-value body" $
+      let props = Properties
+            { propertiesMessageId = Just (MessageIdString "msg-001")
+            , propertiesUserId = Nothing
+            , propertiesTo = Just "queue/test"
+            , propertiesSubject = Just "Test Message"
+            , propertiesReplyTo = Nothing
+            , propertiesCorrelationId = Nothing
+            , propertiesContentType = Just "text/plain"
+            , propertiesContentEncoding = Nothing
+            , propertiesAbsoluteExpiryTime = Nothing
+            , propertiesCreationTime = Just 1000.0
+            , propertiesGroupId = Nothing
+            , propertiesGroupSequence = Nothing
+            , propertiesReplyToGroupId = Nothing
+            }
+          body = AmqpValueBody (AMQPString "Test message body")
+          msg = Message Nothing (Just props) Nothing (Just body) Nothing
+      in roundtripMessage msg @?= msg
+  , testCase "message with header, properties, app-properties, and body" $
+      let header = Header
+            { headerDurable = Just False
+            , headerPriority = Just 7
+            , headerTtl = Just 30000
+            , headerFirstAcquirer = Just True
+            , headerDeliveryCount = Just 0
+            }
+          props = Properties
+            { propertiesMessageId = Just (MessageIdULong 99999)
+            , propertiesUserId = Just (BS.pack [0xAA, 0xBB])
+            , propertiesTo = Just "topic/events"
+            , propertiesSubject = Just "Event Occurred"
+            , propertiesReplyTo = Just "queue/replies"
+            , propertiesCorrelationId = Just (MessageIdString "corr-456")
+            , propertiesContentType = Just "application/octet-stream"
+            , propertiesContentEncoding = Just "gzip"
+            , propertiesAbsoluteExpiryTime = Just 2000.0
+            , propertiesCreationTime = Just 1500.0
+            , propertiesGroupId = Just "batch-1"
+            , propertiesGroupSequence = Just 1
+            , propertiesReplyToGroupId = Just "batch-replies"
+            }
+          appProps = [(AMQPString "custom-key", AMQPString "custom-value")]
+          body = DataBody [BS.pack [0x01, 0x02, 0x03, 0x04]]
+          msg = Message (Just header) (Just props) (Just appProps) (Just body) Nothing
+      in roundtripMessage msg @?= msg
+  , testCase "message with all sections including footer" $
+      let header = Header
+            { headerDurable = Just True
+            , headerPriority = Just 5
+            , headerTtl = Just 60000
+            , headerFirstAcquirer = Just False
+            , headerDeliveryCount = Just 2
+            }
+          props = Properties
+            { propertiesMessageId = Just (MessageIdBinary (BS.pack [0x01, 0x02]))
+            , propertiesUserId = Nothing
+            , propertiesTo = Nothing
+            , propertiesSubject = Nothing
+            , propertiesReplyTo = Nothing
+            , propertiesCorrelationId = Nothing
+            , propertiesContentType = Nothing
+            , propertiesContentEncoding = Nothing
+            , propertiesAbsoluteExpiryTime = Nothing
+            , propertiesCreationTime = Nothing
+            , propertiesGroupId = Nothing
+            , propertiesGroupSequence = Nothing
+            , propertiesReplyToGroupId = Nothing
+            }
+          appProps = [(AMQPSymbol "app-key", AMQPInt 42)]
+          body = AmqpValueBody (AMQPMap [(AMQPString "key", AMQPString "value")])
+          footer = [(AMQPSymbol "signature", AMQPBinary (BS.pack [0xFF, 0xEE]))]
+          msg = Message (Just header) (Just props) (Just appProps) (Just body) (Just footer)
+      in roundtripMessage msg @?= msg
   ]

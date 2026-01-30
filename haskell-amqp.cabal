@@ -18,6 +18,7 @@ library
       Network.AMQP.Types
       Network.AMQP.Transport
       Network.AMQP.Performatives
+      Network.AMQP.Messaging
       Network.AMQP.Connection
       Network.AMQP.Client
   other-modules:

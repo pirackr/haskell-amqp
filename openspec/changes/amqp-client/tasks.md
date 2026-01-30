@@ -75,13 +75,13 @@
 
 ## 8. Messaging - Message Structure
 
-- [ ] 8.1 Define Message data type with all sections (header, properties, app-properties, body, footer)
-- [ ] 8.2 Define Header fields (durable, priority, ttl, first-acquirer, delivery-count)
-- [ ] 8.3 Define Properties fields (message-id, to, subject, reply-to, correlation-id, content-type, etc.)
-- [ ] 8.4 Define body variants (Data, AmqpSequence, AmqpValue)
-- [ ] 8.5 Implement message encoding (concatenated sections)
-- [ ] 8.6 Implement message decoding
-- [ ] 8.7 Write roundtrip tests for messages
+- [x] 8.1 Define Message data type with all sections (header, properties, app-properties, body, footer)
+- [x] 8.2 Define Header fields (durable, priority, ttl, first-acquirer, delivery-count)
+- [x] 8.3 Define Properties fields (message-id, to, subject, reply-to, correlation-id, content-type, etc.)
+- [x] 8.4 Define body variants (Data, AmqpSequence, AmqpValue)
+- [x] 8.5 Implement message encoding (concatenated sections)
+- [x] 8.6 Implement message decoding
+- [x] 8.7 Write roundtrip tests for messages
 
 ## 9. Messaging - Delivery States
 
